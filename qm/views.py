@@ -16,6 +16,16 @@ PICKER_ROLES = (
 )
 
 
+def roles_status(bot, guild: discord.Guild, member: discord.Member) -> str:
+    """One line per picker role: ✅ if the member has it, ⬜ if not."""
+    lines = []
+    for role_name, label, emoji, _style in PICKER_ROLES:
+        role = get_role(bot, guild, role_name)
+        has = role is not None and role in member.roles
+        lines.append(f"{'✅' if has else '⬜'} {emoji} {label}")
+    return "\n".join(lines)
+
+
 async def toggle_role(interaction: discord.Interaction, role_name: str) -> None:
     await interaction.response.defer(ephemeral=True)
     bot, guild, member = interaction.client, interaction.guild, interaction.user
@@ -36,13 +46,18 @@ async def toggle_role(interaction: discord.Interaction, role_name: str) -> None:
                 ephemeral=True,
             )
         await member.remove_roles(role, reason="Role picker")
-        await interaction.followup.send(f"Removed **{role.name}**.", ephemeral=True)
+        await interaction.followup.send(
+            f"Removed **{role.name}**.\n\n**Your roles now**\n{roles_status(bot, guild, member)}", ephemeral=True
+        )
         await game_leave(bot, guild, member, role_name)
         return
 
     await member.add_roles(role, reason="Role picker")
     extra = " The MRFC section is now unlocked." if role_name == ROLE_CLUB else ""
-    await interaction.followup.send(f"You now have **{role.name}**.{extra}", ephemeral=True)
+    await interaction.followup.send(
+        f"You now have **{role.name}**.{extra}\n\n**Your roles now**\n{roles_status(bot, guild, member)}",
+        ephemeral=True,
+    )
     # The game-specific welcome follows the pick.
     await game_welcome(bot, guild, member, role_name)
 
@@ -56,11 +71,24 @@ class RoleButton(discord.ui.Button):
         await toggle_role(interaction, self.role_name)
 
 
+class MyRolesButton(discord.ui.Button):
+    """Shows the member which picker roles they currently have (the buttons themselves look the same for everyone)."""
+
+    def __init__(self):
+        super().__init__(label="My roles", emoji="📋", style=discord.ButtonStyle.success, custom_id="qm:role:mine")
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_message(
+            f"**Your roles**\n{roles_status(interaction.client, interaction.guild, interaction.user)}", ephemeral=True
+        )
+
+
 class RolePickerView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         for role_name, label, emoji, style in PICKER_ROLES:
             self.add_item(RoleButton(role_name, label, emoji, style))
+        self.add_item(MyRolesButton())
 
 
 def picker_embed() -> discord.Embed:
@@ -70,7 +98,9 @@ def picker_embed() -> discord.Embed:
             "Press a button to add a role. Press it again to remove it.\n\n"
             "⚽ **Football Club**: unlocks the MRFC section (sessions, chat and more).\n"
             "📣 **Event Pings**: get pinged for events.\n"
-            "📰 **News Pings**: get pinged for server news."
+            "📰 **News Pings**: get pinged for server news.\n"
+            "🔴 **Stream Pings**: get pinged when someone goes live.\n\n"
+            "📋 **My roles** shows which ones you have right now."
         ),
         colour=discord.Colour.blurple(),
     )

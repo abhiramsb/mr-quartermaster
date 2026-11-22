@@ -102,9 +102,14 @@ def test_everyone_new_arrival_sees_only_reception():
     for cat, ch in _channels():
         visible = can_view([], cat, ch)
         assert visible == (cat.name == "HQ"), (cat.name, ch.name)
-    for key in ("reception", "rules", "announcements", "pick_roles"):
+    for key in ("rules", "announcements", "pick_roles"):
         cat, ch = find(key)
         assert not can_post([], cat, ch), key
+
+
+def test_everyone_can_welcome_newcomers_in_reception():
+    cat, ch = find("reception")
+    assert can_post([], cat, ch)
 
 
 def test_recruit_gets_general_but_not_mrfc_or_staff():

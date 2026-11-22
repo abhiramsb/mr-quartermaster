@@ -77,8 +77,8 @@ LAYOUT: tuple[CategorySpec, ...] = (
         "HQ",
         {EVERYONE: R, **_STAFF},
         (
-            ChannelSpec("reception", "reception", topic="Who just joined and who just left.",
-                        renamed_from=("the-reception",)),
+            ChannelSpec("reception", "reception", topic="Say hi to new members. Joins and leaves show up here.",
+                        access={EVERYONE: RW}, renamed_from=("the-reception",)),
             ChannelSpec("rules", "rules", topic="Server rules."),
             ChannelSpec("announcements", "announcements", topic="Server-wide news.", access={ROLE_ADMIN: RW, ROLE_MOD: RW}),
             ChannelSpec("pick_roles", "pick-your-roles", topic="Choose your game and ping roles.",
