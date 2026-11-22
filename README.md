@@ -17,7 +17,7 @@ members, hands out roles, and lets MRFC Captains manage the squad. The football-
 - **`/setup migrate`:** moves existing members to the new roles. Previews by default. Everyone gets **Recruit** and
   **Football Club**; the server owner (or the member you pick with `captain`) also becomes **MRFC Captain** and
   **MRFC Squad**. Nobody else gets Captain or Squad. Options: `give_football_club_to_all`, `remove_old_role`, and
-  `announce`, which posts a relaunch announcement with a roll call and one combined football welcome in `#reception`
+  `announce`, which posts a relaunch announcement with a roll call in `#announcements` and one combined football welcome in `#reception`
   (off by default, so you can migrate quietly first).
 - **`/setup status`:** shows what is configured and what needs fixing.
 - **`/squad add | remove | list`:** MRFC Captains manage the Squad role without needing Manage Roles.
@@ -39,7 +39,7 @@ them above this bot's role. The bot places the roles below its own and cannot gr
 ## Channels
 | Category | Channels | Who |
 |---|---|---|
-| RECEPTION | `#reception`, `#rules`, `#announcements`, `#pick-your-roles` | everyone reads; staff post in announcements |
+| START HERE | `#reception`, `#rules`, `#announcements`, `#pick-your-roles` | everyone reads; staff post in announcements |
 | GENERAL | `#general`, `#media`, `#looking-for-group`, `#off-topic`, voice: General Lounge, Lounge 2 | Recruit and up |
 | MRFC *(hidden until Football Club)* | `#mrfc-announcements`, `#mrfc-chat`, `#mrfc-sessions`, voice: MRFC Lobby | Football Club and up (Captains post in announcements and sessions) |
 | | `#mrfc-tactics` | Squad and Captains |

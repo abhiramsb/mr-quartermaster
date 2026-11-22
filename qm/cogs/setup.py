@@ -74,7 +74,7 @@ class Setup(commands.Cog):
         dry_run="True shows what would change without changing anything",
         captain="Who becomes MRFC Captain (default: the server owner). Nobody else gets Captain or Squad",
         give_football_club_to_all="Give every existing member Football Club (with Recruit)",
-        announce="Also post the relaunch announcement and the football welcome in #reception",
+        announce="Also post the relaunch announcement (#announcements) and the football welcome (#reception)",
         remove_old_role="An old role to remove from everyone once they have the new ones",
     )
     @app_commands.checks.has_permissions(administrator=True)
@@ -136,15 +136,17 @@ class Setup(commands.Cog):
             lines.append(f"{member.display_name}: " + "; ".join(bits))
 
         everyone, football = announcement_members(plan, captain_member)
+        announcements = get_channel(self.bot, guild, "announcements")
         reception = get_channel(self.bot, guild, "reception")
-        if announce and reception is None:
-            lines.append("⚠ I can't find #reception, so I can't announce. Run `/setup run` first.")
+        if announce and (announcements is None or reception is None):
+            lines.append("⚠ I can't find #announcements or #reception, so I can't announce. Run `/setup run` first.")
             announce = False
         if announce:
             lines.append(f"📣 {'Would post' if dry_run else 'Posted'} the relaunch announcement and a roll call of "
-                         f"{len(everyone)} member(s) in #reception.")
+                         f"{len(everyone)} member(s) in #announcements.")
             if give_football_club_to_all and football:
-                lines.append(f"⚽ {'Would post' if dry_run else 'Posted'} one football welcome for {len(football)} member(s).")
+                lines.append(f"⚽ {'Would post' if dry_run else 'Posted'} one football welcome for {len(football)} "
+                             f"member(s) in #reception.")
 
         if not dry_run:
             failed = 0
@@ -159,14 +161,15 @@ class Setup(commands.Cog):
             if failed:
                 lines.append(f"⚠ {failed} member(s) could not be updated.")
             if announce and everyone:
-                await self._announce(guild, reception, everyone, football if give_football_club_to_all else [])
+                await self._announce(guild, announcements, reception, everyone, football if give_football_club_to_all else [])
 
         header = (f"**Preview only.** {len(plan)} member(s) would change:" if dry_run
                   else f"**Done.** Updated {len(plan)} member(s):")
         await _reply_chunks(interaction, header, lines or ["Nobody needs changes."])
 
-    async def _announce(self, guild, reception, everyone, football) -> None:
-        """The one-off relaunch posts: an announcement with a roll call, then one combined football welcome."""
+    async def _announce(self, guild, announcements, reception, everyone, football) -> None:
+        """The one-off relaunch posts: the announcement and roll call go to #announcements, and the one combined
+        football welcome goes to #reception like every other welcome."""
         rules = get_channel(self.bot, guild, "rules")
         picker = get_channel(self.bot, guild, "pick_roles")
         embed = discord.Embed(
@@ -179,9 +182,9 @@ class Setup(commands.Cog):
             ),
             colour=discord.Colour.blurple(),
         )
-        await send_embed(reception, embed, pick_gif(self.bot, guild.id, "welcome"), discord.AllowedMentions.none())
+        await send_embed(announcements, embed, pick_gif(self.bot, guild.id, "welcome"), discord.AllowedMentions.none())
         for block in mention_blocks([m.mention for m in everyone]):
-            await reception.send(f"Roll call: {block}", allowed_mentions=discord.AllowedMentions(users=everyone))
+            await announcements.send(f"Roll call: {block}", allowed_mentions=discord.AllowedMentions(users=everyone))
         if football:
             names = " ".join(m.mention for m in football)
             football_embed = discord.Embed(
