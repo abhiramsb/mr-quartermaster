@@ -6,8 +6,6 @@ members, hands out roles, and lets MRFC Captains manage the squad. The football-
 
 ## What it does
 - **#reception:** a random welcome when someone joins, a random send-off when they leave, and the **Recruit** role on join.
-  When a member welcomes a newcomer there (replies to the welcome post, or mentions someone who joined in the last 2 days),
-  the bot answers with a line and a GIF (once per member every 5 minutes). Customise it with `/reception line|gif` kind **greet**.
   The server-wide lines contain no football words. Each message can include a random GIF from a list you curate.
 - **Game welcome and send-off:** when someone picks **Football Club**, a colourful football welcome posts in `#reception`;
   when they deselect it, a football send-off posts there. Repeated toggling within 5 minutes is ignored.

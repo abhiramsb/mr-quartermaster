@@ -18,7 +18,7 @@ FOOTBALL_WORDS = re.compile(
     r"football|soccer|match|fixture|pitch|goal|squad|mrfc|gaffer|transfer|team sheet|boots|shin|striker|kick-?off",
     re.IGNORECASE,
 )
-PLACEHOLDERS = {"user", "name", "server", "count", "picker", "sessions", "new"}
+PLACEHOLDERS = {"user", "name", "server", "count", "picker", "sessions"}
 
 
 def make_bot():
@@ -27,7 +27,7 @@ def make_bot():
 
 
 def test_server_wide_pools_have_no_football_terms():
-    for kind in ("welcome", "farewell", "greet"):
+    for kind in ("welcome", "farewell"):
         for line in KINDS[kind].builtin:
             assert not FOOTBALL_WORDS.search(line), (kind, line)
 
@@ -104,7 +104,7 @@ def test_gif_url_rules():
 
 
 def test_seed_file_is_valid_and_complete():
-    assert set(SEED_GIFS) == set(KINDS) - {"greet"}  # greet reuses the welcome GIFs
+    assert set(SEED_GIFS) == set(KINDS)
     assert {k: len(v) for k, v in SEED_GIFS.items()} == {"welcome": 7, "farewell": 6, "football": 5, "football_leave": 4}
     everything = [u for urls in SEED_GIFS.values() for u in urls]
     assert len(everything) == len(set(everything))
@@ -149,9 +149,3 @@ if __name__ == "__main__":
                 failed += 1
                 print("FAIL", name, repr(e))
     sys.exit(1 if failed else 0)
-
-
-def test_greet_pool_names_greeter_and_newcomer_and_has_gifs():
-    for line in KINDS["greet"].builtin:
-        assert "{user}" in line or "{new}" in line, line
-    assert gif_items(make_bot(), 1, "greet") == SEED_GIFS["welcome"]

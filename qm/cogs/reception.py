@@ -1,8 +1,6 @@
 """#reception: random welcome on join, random send-off on exit, the Recruit role, and curated lines and GIFs."""
 from __future__ import annotations
 
-import time
-
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -12,7 +10,6 @@ from ..messages import (
     KINDS,
     MAX_CUSTOM_ITEMS,
     MAX_LINE_LENGTH,
-    cooldown_ok,
     get_items,
     gif_items,
     pick_gif,
@@ -58,39 +55,6 @@ class Reception(commands.Cog):
         try:
             await send_embed(channel, embed, pick_gif(self.bot, guild.id, "welcome"),
                              discord.AllowedMentions(users=[member]))
-        except discord.HTTPException:
-            pass
-
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        """When a member welcomes a newcomer in #reception (replying to the welcome post, or mentioning someone
-        who joined in the last two days), reply with a line and a GIF. Needs no Message Content intent."""
-        guild = message.guild
-        if guild is None or message.author.bot or not isinstance(message.author, discord.Member):
-            return
-        channel = get_channel(self.bot, guild, "reception")
-        if channel is None or message.channel.id != channel.id:
-            return
-        newcomer = None
-        ref = message.reference.resolved if message.reference else None
-        if isinstance(ref, discord.Message) and ref.author.id == self.bot.user.id:
-            newcomer = next((m for m in ref.mentions if not m.bot and m.id != message.author.id), None)
-        if newcomer is None:
-            now = discord.utils.utcnow()
-            newcomer = next((m for m in message.mentions
-                             if isinstance(m, discord.Member) and not m.bot and m.id != message.author.id
-                             and m.joined_at and (now - m.joined_at).days < 2), None)
-        if newcomer is None:
-            return
-        if not cooldown_ok(self.bot, guild.id, "greet", message.author.id, time.time()):
-            return
-        values = values_for(self.bot, guild, message.author)
-        values["new"] = newcomer.display_name
-        embed = discord.Embed(description=render(pick_line(self.bot, guild.id, "greet"), values),
-                              colour=discord.Colour.gold())
-        try:
-            await send_embed(message.channel, embed, pick_gif(self.bot, guild.id, "greet"),
-                             discord.AllowedMentions(users=[message.author]))
         except discord.HTTPException:
             pass
 
