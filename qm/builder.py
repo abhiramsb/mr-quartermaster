@@ -68,9 +68,41 @@ def _bot_member(guild: discord.Guild, env_name: str) -> Optional[discord.Member]
     return guild.get_member(int(raw))
 
 
+def locate_channel(spec, category, guild_channels, layout_category_names, claimed):
+    """Find the existing channel for a spec. Returns (channel, how) or (None, "").
+
+    how is "here" (right name, right category), "renamed" (old name, right category), "moved" (right name,
+    another category) or "moved+renamed". Channels outside a category, or in a category that isn't part of
+    the layout, can be pulled in; ones already inside another layout category are never taken.
+    """
+    channel_type = discord.ChannelType.voice if spec.kind == "voice" else discord.ChannelType.text
+    names = [spec.name.lower()] + [n.lower() for n in spec.renamed_from]
+
+    def matches(c, name):
+        return c.type == channel_type and c.name.lower() == name and c.id not in claimed
+
+    for name in names:
+        if category is not None:
+            for c in category.channels:
+                if matches(c, name):
+                    return c, ("here" if name == names[0] else "renamed")
+    for name in names:
+        for c in guild_channels:
+            parent = getattr(c, "category", None)
+            if parent is not None and parent.name.lower() in layout_category_names:
+                continue
+            if matches(c, name):
+                return c, ("moved" if name == names[0] else "moved+renamed")
+    return None, ""
+
+
 async def ensure_layout(bot, guild: discord.Guild, roles: dict[str, Optional[discord.Role]], dry_run: bool, log: list[str]) -> None:
+    claimed: set[int] = set()
+    layout_category_names = {c.name.lower() for c in LAYOUT}
     for cat_spec in LAYOUT:
         base_extra = [guild.me]
+        reorder = False
+        ordered: list = []
         cat_overwrites = build_overwrites(merged_access(cat_spec), roles, "text", base_extra)
         category = discord.utils.find(lambda c: c.name.lower() == cat_spec.name.lower(), guild.categories)
         if category is None:
@@ -78,7 +110,7 @@ async def ensure_layout(bot, guild: discord.Guild, roles: dict[str, Optional[dis
             if not dry_run:
                 category = await guild.create_category(cat_spec.name, overwrites=cat_overwrites, reason=REASON)
         else:
-            known = {s.name.lower() for s in cat_spec.channels} | {s.renamed_from.lower() for s in cat_spec.channels if s.renamed_from}
+            known = {s.name.lower() for s in cat_spec.channels} | {n.lower() for s in cat_spec.channels for n in s.renamed_from}
             others = [c for c in category.channels if c.name.lower() not in known]
             note = f" (it also holds {len(others)} channel(s) that aren't part of the layout)" if others else ""
             log.append(f"♻ category **{cat_spec.name}** exists, so I'll update its permissions{note}")
@@ -96,18 +128,7 @@ async def ensure_layout(bot, guild: discord.Guild, roles: dict[str, Optional[dis
                 else:
                     log.append(f"ℹ {ch_spec.bot_env} isn't set, so give that bot access to #{ch_spec.name} yourself")
             overwrites = build_overwrites(merged_access(cat_spec, ch_spec), roles, ch_spec.kind, extra)
-            channel_type = discord.ChannelType.voice if ch_spec.kind == "voice" else discord.ChannelType.text
-            existing = None
-            if category is not None:
-                existing = discord.utils.find(
-                    lambda c: c.name.lower() == ch_spec.name.lower() and c.type == channel_type, category.channels
-                )
-            renamed = False
-            if existing is None and category is not None and ch_spec.renamed_from:
-                existing = discord.utils.find(
-                    lambda c: c.name.lower() == ch_spec.renamed_from.lower() and c.type == channel_type, category.channels
-                )
-                renamed = existing is not None
+            existing, how = locate_channel(ch_spec, category, guild.channels, layout_category_names, claimed)
             if existing is None:
                 log.append(f"➕ create #{ch_spec.name}")
                 if dry_run or category is None:
@@ -118,16 +139,37 @@ async def ensure_layout(bot, guild: discord.Guild, roles: dict[str, Optional[dis
                     existing = await category.create_text_channel(
                         ch_spec.name, topic=ch_spec.topic or None, overwrites=overwrites, reason=REASON
                     )
-            elif renamed:
-                log.append(f"✏ rename #{ch_spec.renamed_from} to #{ch_spec.name} and update its permissions")
-                if not dry_run:
-                    await existing.edit(name=ch_spec.name, topic=ch_spec.topic or None, overwrites=overwrites, reason=REASON)
             else:
-                log.append(f"♻ #{ch_spec.name} exists, so I'll update its permissions")
+                claimed.add(existing.id)
+                parts = []
+                if how.endswith("renamed"):
+                    parts.append(f"rename it to #{ch_spec.name}")
+                if how.startswith("moved"):
+                    parts.append(f"move it into **{cat_spec.name}**")
+                    reorder = True
+                what = " and ".join(parts + ["update its permissions"])
+                log.append(f"{'✏' if parts else '♻'} #{existing.name}: {what}")
                 if not dry_run:
-                    await existing.edit(overwrites=overwrites, reason=REASON)
+                    edits: dict = {"overwrites": overwrites, "reason": REASON}
+                    if how.endswith("renamed"):
+                        edits["name"] = ch_spec.name
+                        if ch_spec.kind == "text" and ch_spec.topic:
+                            edits["topic"] = ch_spec.topic
+                    if how.startswith("moved") and category is not None:
+                        edits["category"] = category
+                    await existing.edit(**edits)
             if existing is not None:
+                claimed.add(existing.id)
+                ordered.append(existing)
                 bot.settings.set(guild.id, f"channel:{ch_spec.key}", existing.id)
+
+        if reorder and not dry_run and category is not None:
+            try:
+                for ch in ordered:
+                    await ch.move(end=True, category=category, sync_permissions=False, reason=REASON)
+                log.append(f"↕ put the channels in **{cat_spec.name}** in layout order")
+            except discord.HTTPException as exc:
+                log.append(f"⚠ couldn't reorder **{cat_spec.name}** ({exc}); drag them into place by hand")
 
 
 async def build(bot, guild: discord.Guild, dry_run: bool) -> list[str]:

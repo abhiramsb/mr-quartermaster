@@ -43,10 +43,32 @@ them above this bot's role. The bot places the roles below its own and cannot gr
 | MRFC *(hidden until Football Club)* | `#mrfc-announcements`, `#mrfc-chat`, `#mrfc-sessions`, voice: MRFC Lobby | Football Club and up (Captains post in announcements and sessions) |
 | | `#mrfc-tactics` | Squad and Captains |
 | | `#mrfc-scouting`, `#mrfc-captains`, voice: Captains' Room | Captains only |
-| GENERAL | `#general`, `#streams-n-clips` *(renamed from `#media` if it exists)*, `#looking-for-group`, `#off-topic`, voice: General Lounge, Lounge 2 | Recruit and up |
+| THE BARRACKS | `#general`, `#streams-n-clips`, `#looking-for-group`, `#off-topic`, voice: General Lounge, Lounge 2 | Recruit and up |
 | STAFF | `#staff-chat`, `#bot-logs`, `#bot-commands` | Admin and Mod |
 
 Squad members also hold Football Club (`/squad add` grants both), so they keep access to the shared MRFC channels.
+
+
+### Moving an existing server onto this layout
+
+`/setup run` renames and moves channels it recognises instead of creating duplicates, so run the dry run first and
+read the preview. Channels outside the layout are never deleted.
+
+| Existing channel | Becomes |
+|---|---|
+| `#get-roles` | `#pick-your-roles` (HQ) |
+| `#rules` | `#rules` (HQ) |
+| `#the-reception` | `#reception` (HQ) |
+| `#general` | `#general` (THE BARRACKS) |
+| `#streams-n-clips` | `#streams-n-clips` (THE BARRACKS) |
+| `#sessions` | `#mrfc-sessions` |
+| `#tactics` | `#mrfc-tactics` |
+| `#scouting` | `#mrfc-scouting` |
+| `#captains-corner` | `#mrfc-captains` |
+| voice `Lobby` | `MRFC Lobby` |
+| voice `Timepass` | `General Lounge` |
+
+Anything not listed (for example an old `#locker-room`) stays where it is. The old empty categories can be deleted by hand.
 
 ## Setup
 1. **Developer Portal** (https://discord.com/developers/applications) -> your application -> **Bot**:

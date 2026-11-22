@@ -58,7 +58,7 @@ class ChannelSpec:
     topic: str = ""
     access: Mapping[str, str] = field(default_factory=dict)  # overrides on top of the category's
     bot_env: str = ""             # env var holding another bot's user ID that must be able to post here
-    renamed_from: str = ""        # an older channel name; if found, the channel is renamed instead of duplicated
+    renamed_from: tuple[str, ...] = ()  # older names; a channel found under one is renamed (and moved) instead of duplicated
 
 
 @dataclass(frozen=True)
@@ -75,10 +75,12 @@ LAYOUT: tuple[CategorySpec, ...] = (
         "HQ",
         {EVERYONE: R, **_STAFF},
         (
-            ChannelSpec("reception", "reception", topic="Who just joined and who just left."),
+            ChannelSpec("reception", "reception", topic="Who just joined and who just left.",
+                        renamed_from=("the-reception",)),
             ChannelSpec("rules", "rules", topic="Server rules."),
             ChannelSpec("announcements", "announcements", topic="Server-wide news.", access={ROLE_ADMIN: RW, ROLE_MOD: RW}),
-            ChannelSpec("pick_roles", "pick-your-roles", topic="Choose your game and ping roles."),
+            ChannelSpec("pick_roles", "pick-your-roles", topic="Choose your game and ping roles.",
+                        renamed_from=("get-roles",)),
         ),
     ),
     CategorySpec(
@@ -90,29 +92,32 @@ LAYOUT: tuple[CategorySpec, ...] = (
             ChannelSpec("mrfc_chat", "mrfc-chat", topic="Football chat.",
                         access={ROLE_CLUB: RW, ROLE_SQUAD: RW, ROLE_CAPTAIN: RW}),
             ChannelSpec("mrfc_sessions", "mrfc-sessions", topic="Session RSVPs from MRFC_GroundsKeeper.",
-                        access={ROLE_CAPTAIN: RW}, bot_env="GROUNDSKEEPER_BOT_ID"),
+                        access={ROLE_CAPTAIN: RW}, bot_env="GROUNDSKEEPER_BOT_ID", renamed_from=("sessions",)),
             ChannelSpec("mrfc_tactics", "mrfc-tactics", topic="Squad tactics and the coach's daily debrief.",
-                        access={ROLE_CLUB: HIDE, ROLE_SQUAD: RW, ROLE_CAPTAIN: RW}, bot_env="COACH_BOT_ID"),
+                        access={ROLE_CLUB: HIDE, ROLE_SQUAD: RW, ROLE_CAPTAIN: RW}, bot_env="COACH_BOT_ID",
+                        renamed_from=("tactics",)),
             ChannelSpec("mrfc_scouting", "mrfc-scouting", topic="Recruiting finds from MRFC_Scout.",
-                        access={ROLE_CLUB: HIDE, ROLE_SQUAD: HIDE, ROLE_CAPTAIN: RW}, bot_env="SCOUT_BOT_ID"),
+                        access={ROLE_CLUB: HIDE, ROLE_SQUAD: HIDE, ROLE_CAPTAIN: RW}, bot_env="SCOUT_BOT_ID",
+                        renamed_from=("scouting",)),
             ChannelSpec("mrfc_captains", "mrfc-captains", topic="Captains only.",
-                        access={ROLE_CLUB: HIDE, ROLE_SQUAD: HIDE, ROLE_CAPTAIN: RW}),
+                        access={ROLE_CLUB: HIDE, ROLE_SQUAD: HIDE, ROLE_CAPTAIN: RW},
+                        renamed_from=("captains-corner",)),
             ChannelSpec("mrfc_lobby", "MRFC Lobby", kind="voice",
-                        access={ROLE_CLUB: RW, ROLE_SQUAD: RW, ROLE_CAPTAIN: RW}),
+                        access={ROLE_CLUB: RW, ROLE_SQUAD: RW, ROLE_CAPTAIN: RW}, renamed_from=("Lobby",)),
             ChannelSpec("mrfc_captains_room", "Captains' Room", kind="voice",
                         access={ROLE_CLUB: HIDE, ROLE_SQUAD: HIDE, ROLE_CAPTAIN: RW}),
         ),
     ),
     CategorySpec(
-        "GENERAL",
+        "THE BARRACKS",
         {EVERYONE: HIDE, ROLE_RECRUIT: RW, **_STAFF},
         (
             ChannelSpec("general", "general", topic="Main chat."),
             ChannelSpec("streams_clips", "streams-n-clips", topic="Live alerts, clips, screenshots and highlights.",
-                        renamed_from="media"),
+                        renamed_from=("media",)),
             ChannelSpec("lfg", "looking-for-group", topic="Find people to play any game with."),
             ChannelSpec("off_topic", "off-topic"),
-            ChannelSpec("lounge1", "General Lounge", kind="voice"),
+            ChannelSpec("lounge1", "General Lounge", kind="voice", renamed_from=("Timepass",)),
             ChannelSpec("lounge2", "Lounge 2", kind="voice"),
         ),
     ),

@@ -74,7 +74,7 @@ def find(key):
 
 
 def test_category_order():
-    assert [c.name for c in LAYOUT] == ["HQ", "MRFC", "GENERAL", "STAFF"]
+    assert [c.name for c in LAYOUT] == ["HQ", "MRFC", "THE BARRACKS", "STAFF"]
 
 
 def test_roles_referenced_exist():
@@ -109,7 +109,7 @@ def test_everyone_new_arrival_sees_only_reception():
 
 def test_recruit_gets_general_but_not_mrfc_or_staff():
     for cat, ch in _channels():
-        if cat.name == "GENERAL":
+        if cat.name == "THE BARRACKS":
             assert can_post([ROLE_RECRUIT], cat, ch), ch.name
         if cat.name in ("MRFC", "STAFF"):
             assert not can_view([ROLE_RECRUIT], cat, ch), ch.name
@@ -183,7 +183,83 @@ if __name__ == "__main__":
 
 def test_streams_clips_is_general_and_renames_media():
     cat, ch = find("streams_clips")
-    assert cat.name == "GENERAL"
-    assert ch.name == "streams-n-clips" and ch.renamed_from == "media"
+    assert cat.name == "THE BARRACKS"
+    assert ch.name == "streams-n-clips" and "media" in ch.renamed_from
     assert can_post([ROLE_RECRUIT], cat, ch)
     assert not any(c.key == "mrfc_streams_clips" for _, c in _channels())
+
+
+# --- mapping the existing "Bindaas FC" channels onto the new layout -------------------------------------------
+import discord as _d  # noqa: E402
+from qm.builder import locate_channel  # noqa: E402
+
+
+class _Cat:
+    def __init__(self, name, channels=()):
+        self.name, self.channels = name, list(channels)
+
+
+class _Ch:
+    _next = 1000
+
+    def __init__(self, name, kind="text", category=None):
+        _Ch._next += 1
+        self.id, self.name, self.category = _Ch._next, name, category
+        self.type = _d.ChannelType.voice if kind == "voice" else _d.ChannelType.text
+
+
+def _existing_server():
+    text = _Cat("Text Channels")
+    squad = _Cat("Squad Only")
+    voice = _Cat("Voice Channels")
+    chans = [
+        _Ch("get-roles"), _Ch("rules"),
+        *[_Ch(n, category=text) for n in ("the-reception", "streams-n-clips", "sessions", "general", "scouting", "tactics")],
+        *[_Ch(n, category=squad) for n in ("locker-room", "captains-corner")],
+        *[_Ch(n, kind="voice", category=voice) for n in ("Lobby", "Timepass")],
+    ]
+    return chans
+
+
+def test_existing_channels_map_to_the_new_layout():
+    chans = _existing_server()
+    names = {c.name for c in LAYOUT}
+    expected = {
+        "reception": "the-reception", "rules": "rules", "pick_roles": "get-roles",
+        "mrfc_sessions": "sessions", "mrfc_tactics": "tactics", "mrfc_scouting": "scouting",
+        "mrfc_captains": "captains-corner", "mrfc_lobby": "Lobby", "lounge1": "Timepass",
+        "general": "general", "streams_clips": "streams-n-clips",
+    }
+    claimed = set()
+    found = {}
+    for cat in LAYOUT:
+        for spec in cat.channels:
+            ch, how = locate_channel(spec, None, chans, {n.lower() for n in names}, claimed)
+            if ch is not None:
+                claimed.add(ch.id)
+                found[spec.key] = ch.name
+    assert found == expected
+    # nothing is claimed twice, and locker-room is deliberately left alone
+    assert "locker-room" not in found.values()
+
+
+def test_locate_reports_rename_and_move():
+    chans = _existing_server()
+    cats = {n.lower() for n in (c.name for c in LAYOUT)}
+    _, spec = find("reception")[0], find("reception")[1]
+    ch, how = locate_channel(spec, None, chans, cats, set())
+    assert ch.name == "the-reception" and how == "moved+renamed"
+    _, spec = find("general")[0], find("general")[1]
+    ch, how = locate_channel(spec, None, chans, cats, set())
+    assert how == "moved"
+    # a channel already in the right category with the right name is left in place
+    barracks = _Cat("THE BARRACKS")
+    here = _Ch("general", category=barracks)
+    barracks.channels.append(here)
+    ch, how = locate_channel(spec, barracks, chans + [here], cats, set())
+    assert ch is here and how == "here"
+    # never steals a channel from another layout category
+    staff = _Cat("STAFF")
+    stray = _Ch("general", category=staff)
+    ch, _ = locate_channel(spec, None, [stray], cats, set())
+    assert ch is None
