@@ -12,7 +12,6 @@ from qm.layout import (  # noqa: E402
     EVERYONE, LAYOUT, ROLE_ADMIN, ROLE_CAPTAIN, ROLE_CLUB, ROLE_MOD, ROLE_RECRUIT, ROLE_SPECS, ROLE_SQUAD,
     build_overwrites, merged_access,
 )
-from qm.cogs.reception import render  # noqa: E402
 
 ROLE_NAMES = {s.name for s in ROLE_SPECS}
 class Target:
@@ -155,13 +154,6 @@ def test_extra_members_always_get_rw():
     out = build_overwrites(merged_access(cat, ch), TARGETS, ch.kind, [bot])
     allow, _ = out[bot].pair()
     assert allow.view_channel and allow.send_messages and allow.read_message_history
-
-
-def test_render_placeholders():
-    guild = SimpleNamespace(name="Millennial Regiment Gaming", member_count=24)
-    member = SimpleNamespace(mention="<@1>", display_name="Sam")
-    text = render("Hi {user} / {name} to {server} #{count} {picker} {unknown}", member=member, guild=guild, picker="#p")
-    assert text == "Hi <@1> / Sam to Millennial Regiment Gaming #24 #p {unknown}"
 
 
 def test_invite_permissions_integer():

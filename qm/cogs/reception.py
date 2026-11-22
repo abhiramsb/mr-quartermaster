@@ -1,4 +1,4 @@
-"""#reception: welcome on join, send-off on exit, and the default Recruit role."""
+"""#reception: random welcome on join, random send-off on exit, the Recruit role, and curated lines and GIFs."""
 from __future__ import annotations
 
 import discord
@@ -6,36 +6,27 @@ from discord import app_commands
 from discord.ext import commands
 
 from ..layout import ROLE_RECRUIT
+from ..messages import (
+    KINDS,
+    MAX_CUSTOM_ITEMS,
+    MAX_LINE_LENGTH,
+    get_items,
+    pick_gif,
+    pick_line,
+    render,
+    save_items,
+    send_embed,
+    valid_gif_url,
+    values_for,
+)
 from ..util import get_channel, get_role
 
-DEFAULT_WELCOME = (
-    "Welcome to **{server}**, {user}! You're member #{count}.\n"
-    "Head to {picker} to choose your roles."
-)
-DEFAULT_FAREWELL = "👋 **{name}** has left {server}. We're now {count} strong."
-
-
-def render(template: str, *, member: discord.abc.User, guild: discord.Guild, picker: str) -> str:
-    """Fill in {user}, {name}, {server}, {count} and {picker}. Unknown placeholders are left as typed."""
-    values = {
-        "{user}": member.mention,
-        "{name}": member.display_name,
-        "{server}": guild.name,
-        "{count}": str(guild.member_count or 0),
-        "{picker}": picker,
-    }
-    for key, value in values.items():
-        template = template.replace(key, value)
-    return template
+KIND_CHOICES = [app_commands.Choice(name=k.label, value=k.key) for k in KINDS.values()]
 
 
 class Reception(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-
-    def _picker_mention(self, guild: discord.Guild) -> str:
-        channel = get_channel(self.bot, guild, "pick_roles")
-        return channel.mention if channel else "#pick-your-roles"
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
@@ -51,15 +42,17 @@ class Reception(commands.Cog):
         channel = get_channel(self.bot, guild, "reception")
         if channel is None:
             return
-        template = self.bot.settings.get(guild.id, "welcome_text", DEFAULT_WELCOME)
+        values = values_for(self.bot, guild, member)
+        line = render(pick_line(self.bot, guild.id, "welcome"), values)
         embed = discord.Embed(
             title="A new recruit has arrived",
-            description=render(template, member=member, guild=guild, picker=self._picker_mention(guild)),
+            description=f"{line}\n\nPick your roles in {values['picker']}.",
             colour=discord.Colour.green(),
         )
         embed.set_thumbnail(url=member.display_avatar.url)
         try:
-            await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=[member]))
+            await send_embed(channel, embed, pick_gif(self.bot, guild.id, "welcome"),
+                             discord.AllowedMentions(users=[member]))
         except discord.HTTPException:
             pass
 
@@ -71,46 +64,105 @@ class Reception(commands.Cog):
         channel = get_channel(self.bot, guild, "reception")
         if channel is None:
             return
-        template = self.bot.settings.get(guild.id, "farewell_text", DEFAULT_FAREWELL)
-        text = render(template, member=member, guild=guild, picker=self._picker_mention(guild))
+        line = render(pick_line(self.bot, guild.id, "farewell"), values_for(self.bot, guild, member))
+        embed = discord.Embed(description=line, colour=discord.Colour.dark_grey())
         try:
-            await channel.send(text, allowed_mentions=discord.AllowedMentions.none())
+            await send_embed(channel, embed, pick_gif(self.bot, guild.id, "farewell"),
+                             discord.AllowedMentions.none())
         except discord.HTTPException:
             pass
 
+    # ---- admin commands ----
     reception = app_commands.Group(
         name="reception",
-        description="Customise the join and leave messages",
+        description="Manage the welcome and send-off messages",
         guild_only=True,
         default_permissions=discord.Permissions(administrator=True),
     )
+    line = app_commands.Group(name="line", description="Extra message lines", parent=reception)
+    gif = app_commands.Group(name="gif", description="Curated GIF list", parent=reception)
 
-    @reception.command(name="welcome", description="Set the welcome text. Use {user} {name} {server} {count} {picker}")
+    @line.command(name="add", description="Add a line to a message pool. Use {user} {name} {server} {count}")
+    @app_commands.choices(kind=KIND_CHOICES)
     @app_commands.checks.has_permissions(administrator=True)
-    async def set_welcome(self, interaction: discord.Interaction, text: app_commands.Range[str, 1, 1000]):
-        self.bot.settings.set(interaction.guild_id, "welcome_text", text)
-        await interaction.response.send_message("Welcome text saved. Try `/reception preview`.", ephemeral=True)
+    async def line_add(self, interaction: discord.Interaction, kind: app_commands.Choice[str],
+                       text: app_commands.Range[str, 1, MAX_LINE_LENGTH]):
+        items = get_items(self.bot, interaction.guild_id, "lines", kind.value)
+        if len(items) >= MAX_CUSTOM_ITEMS:
+            return await interaction.response.send_message(f"That list is full ({MAX_CUSTOM_ITEMS} lines).", ephemeral=True)
+        items.append(text)
+        save_items(self.bot, interaction.guild_id, "lines", kind.value, items)
+        await interaction.response.send_message(f"Added to **{kind.name}**. It now has {len(items)} custom line(s).", ephemeral=True)
 
-    @reception.command(name="farewell", description="Set the send-off text. Use {user} {name} {server} {count}")
+    @line.command(name="list", description="Show the custom lines for a message pool")
+    @app_commands.choices(kind=KIND_CHOICES)
     @app_commands.checks.has_permissions(administrator=True)
-    async def set_farewell(self, interaction: discord.Interaction, text: app_commands.Range[str, 1, 1000]):
-        self.bot.settings.set(interaction.guild_id, "farewell_text", text)
-        await interaction.response.send_message("Send-off text saved. Try `/reception preview`.", ephemeral=True)
+    async def line_list(self, interaction: discord.Interaction, kind: app_commands.Choice[str]):
+        items = get_items(self.bot, interaction.guild_id, "lines", kind.value)
+        built_in = len(KINDS[kind.value].builtin)
+        body = "\n".join(f"{i}. {t}" for i, t in enumerate(items, 1)) or "None yet."
+        await interaction.response.send_message(
+            f"**{kind.name}**: {built_in} built-in line(s) plus your custom ones:\n{body}"[:1900],
+            ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
-    @reception.command(name="preview", description="Show how the welcome and send-off will look (only you see this)")
+    @line.command(name="remove", description="Remove a custom line by its number from /reception line list")
+    @app_commands.choices(kind=KIND_CHOICES)
+    @app_commands.checks.has_permissions(administrator=True)
+    async def line_remove(self, interaction: discord.Interaction, kind: app_commands.Choice[str], number: int):
+        items = get_items(self.bot, interaction.guild_id, "lines", kind.value)
+        if not 1 <= number <= len(items):
+            return await interaction.response.send_message("No custom line with that number.", ephemeral=True)
+        removed = items.pop(number - 1)
+        save_items(self.bot, interaction.guild_id, "lines", kind.value, items)
+        await interaction.response.send_message(f"Removed: {removed}", ephemeral=True,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
+    @gif.command(name="add", description="Add a GIF link (https) to a message pool")
+    @app_commands.choices(kind=KIND_CHOICES)
+    @app_commands.checks.has_permissions(administrator=True)
+    async def gif_add(self, interaction: discord.Interaction, kind: app_commands.Choice[str], url: str):
+        url = url.strip()
+        if not valid_gif_url(url):
+            return await interaction.response.send_message("That needs to be a full https:// link.", ephemeral=True)
+        items = get_items(self.bot, interaction.guild_id, "gifs", kind.value)
+        if url in items:
+            return await interaction.response.send_message("That GIF is already in the list.", ephemeral=True)
+        if len(items) >= MAX_CUSTOM_ITEMS:
+            return await interaction.response.send_message(f"That list is full ({MAX_CUSTOM_ITEMS} GIFs).", ephemeral=True)
+        items.append(url)
+        save_items(self.bot, interaction.guild_id, "gifs", kind.value, items)
+        await interaction.response.send_message(f"Added to **{kind.name}**. It now has {len(items)} GIF(s).", ephemeral=True)
+
+    @gif.command(name="list", description="Show the GIFs for a message pool")
+    @app_commands.choices(kind=KIND_CHOICES)
+    @app_commands.checks.has_permissions(administrator=True)
+    async def gif_list(self, interaction: discord.Interaction, kind: app_commands.Choice[str]):
+        items = get_items(self.bot, interaction.guild_id, "gifs", kind.value)
+        body = "\n".join(f"{i}. <{u}>" for i, u in enumerate(items, 1)) or "None yet. No GIF is shown until you add some."
+        await interaction.response.send_message(f"**{kind.name}** GIFs:\n{body}"[:1900], ephemeral=True)
+
+    @gif.command(name="remove", description="Remove a GIF by its number from /reception gif list")
+    @app_commands.choices(kind=KIND_CHOICES)
+    @app_commands.checks.has_permissions(administrator=True)
+    async def gif_remove(self, interaction: discord.Interaction, kind: app_commands.Choice[str], number: int):
+        items = get_items(self.bot, interaction.guild_id, "gifs", kind.value)
+        if not 1 <= number <= len(items):
+            return await interaction.response.send_message("No GIF with that number.", ephemeral=True)
+        removed = items.pop(number - 1)
+        save_items(self.bot, interaction.guild_id, "gifs", kind.value, items)
+        await interaction.response.send_message(f"Removed <{removed}>.", ephemeral=True)
+
+    @reception.command(name="preview", description="Show a random sample of each message (only you see this)")
     @app_commands.checks.has_permissions(administrator=True)
     async def preview(self, interaction: discord.Interaction):
         guild = interaction.guild
-        picker = self._picker_mention(guild)
-        welcome = render(self.bot.settings.get(guild.id, "welcome_text", DEFAULT_WELCOME),
-                         member=interaction.user, guild=guild, picker=picker)
-        farewell = render(self.bot.settings.get(guild.id, "farewell_text", DEFAULT_FAREWELL),
-                          member=interaction.user, guild=guild, picker=picker)
-        await interaction.response.send_message(
-            f"**Welcome**\n{welcome}\n\n**Send-off**\n{farewell}",
-            ephemeral=True,
-            allowed_mentions=discord.AllowedMentions.none(),
-        )
+        values = values_for(self.bot, guild, interaction.user)
+        parts = []
+        for kind in KINDS.values():
+            gifs = len(get_items(self.bot, guild.id, "gifs", kind.key))
+            parts.append(f"**{kind.label}** ({gifs} GIF(s))\n{render(pick_line(self.bot, guild.id, kind.key), values)}")
+        await interaction.response.send_message("\n\n".join(parts), ephemeral=True,
+                                                allowed_mentions=discord.AllowedMentions.none())
 
 
 async def setup(bot):

@@ -5,7 +5,10 @@ members, hands out roles, and lets MRFC Captains manage the squad. The football-
 (MRFC_GroundsKeeper, MRFC_Scout, MRFC_Coach) live in their own repos.
 
 ## What it does
-- **#reception:** a welcome embed when someone joins, a short send-off when they leave, and the **Recruit** role on join.
+- **#reception:** a random welcome when someone joins, a random send-off when they leave, and the **Recruit** role on join.
+  The server-wide lines contain no football words. Each message can include a random GIF from a list you curate.
+- **Game welcome:** the first time someone picks **Football Club**, a football-themed welcome posts in `#mrfc-chat`.
+  Other games can get their own later (see `qm/messages.py`).
 - **Role-picker** in `#pick-your-roles`: persistent buttons for **Football Club** (unlocks the MRFC section),
   **Event Pings** and **News Pings**.
 - **`/setup run`:** creates or updates the roles, categories, channels and permissions below. Previews by default.
@@ -13,7 +16,10 @@ members, hands out roles, and lets MRFC Captains manage the squad. The football-
 - **`/setup status`:** shows what is configured and what needs fixing.
 - **`/squad add | remove | list`:** MRFC Captains manage the Squad role without needing Manage Roles.
 - **`/announce`:** staff post an announcement embed, optionally pinging a role.
-- **`/reception welcome | farewell | preview`:** edit the join and leave messages.
+- **`/reception line add | list | remove`:** add your own lines to the welcome, send-off or football pools.
+- **`/reception gif add | list | remove`:** curate the GIFs (https links; direct `.gif` links show inside the message,
+  Tenor or Giphy page links show as an animation under it). No GIF is shown until you add some.
+- **`/reception preview`:** a random sample of each message (only you see it).
 - **`/rolepicker`:** repost the picker in the current channel.
 - **`#bot-logs`:** joins, leaves, role changes and bans.
 
