@@ -81,18 +81,6 @@ LAYOUT: tuple[CategorySpec, ...] = (
         ),
     ),
     CategorySpec(
-        "GENERAL",
-        {EVERYONE: HIDE, ROLE_RECRUIT: RW, **_STAFF},
-        (
-            ChannelSpec("general", "general", topic="Main chat."),
-            ChannelSpec("media", "media", topic="Clips and screenshots."),
-            ChannelSpec("lfg", "looking-for-group", topic="Find people to play any game with."),
-            ChannelSpec("off_topic", "off-topic"),
-            ChannelSpec("lounge1", "General Lounge", kind="voice"),
-            ChannelSpec("lounge2", "Lounge 2", kind="voice"),
-        ),
-    ),
-    CategorySpec(
         "MRFC",
         {EVERYONE: HIDE, ROLE_CLUB: R, ROLE_SQUAD: R, ROLE_CAPTAIN: R, **_STAFF},
         (
@@ -112,6 +100,18 @@ LAYOUT: tuple[CategorySpec, ...] = (
                         access={ROLE_CLUB: RW, ROLE_SQUAD: RW, ROLE_CAPTAIN: RW}),
             ChannelSpec("mrfc_captains_room", "Captains' Room", kind="voice",
                         access={ROLE_CLUB: HIDE, ROLE_SQUAD: HIDE, ROLE_CAPTAIN: RW}),
+        ),
+    ),
+    CategorySpec(
+        "GENERAL",
+        {EVERYONE: HIDE, ROLE_RECRUIT: RW, **_STAFF},
+        (
+            ChannelSpec("general", "general", topic="Main chat."),
+            ChannelSpec("media", "media", topic="Clips and screenshots."),
+            ChannelSpec("lfg", "looking-for-group", topic="Find people to play any game with."),
+            ChannelSpec("off_topic", "off-topic"),
+            ChannelSpec("lounge1", "General Lounge", kind="voice"),
+            ChannelSpec("lounge2", "Lounge 2", kind="voice"),
         ),
     ),
     CategorySpec(

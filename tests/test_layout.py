@@ -73,6 +73,10 @@ def find(key):
     raise KeyError(key)
 
 
+def test_category_order():
+    assert [c.name for c in LAYOUT] == ["HQ", "MRFC", "GENERAL", "STAFF"]
+
+
 def test_roles_referenced_exist():
     for cat in LAYOUT:
         for name in cat.access:
