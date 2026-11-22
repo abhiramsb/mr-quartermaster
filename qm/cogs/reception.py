@@ -55,6 +55,7 @@ class Reception(commands.Cog):
             colour=discord.Colour.green(),
         )
         embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text=f"Member #{guild.member_count}")
         try:
             await send_embed(channel, embed, pick_gif(self.bot, guild.id, "welcome"),
                              discord.AllowedMentions(users=[member]), view=welcome_view(member.id))
