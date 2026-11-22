@@ -1,6 +1,7 @@
 """/stream: members link their Twitch or YouTube channel and the bot announces when they go live."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -28,6 +29,7 @@ from ..streams import (
     load_state,
     parse_twitch,
     parse_youtube,
+    presence_stream,
     remove_link,
     save_links,
     save_state,
@@ -53,6 +55,7 @@ class Streams(commands.Cog):
         self.twitch: Optional[TwitchClient] = None
         self.youtube: Optional[YouTubeClient] = None
         self._ticks = 0
+        self._locks: dict[int, asyncio.Lock] = {}
 
     async def cog_load(self):
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15))
@@ -61,10 +64,10 @@ class Streams(commands.Cog):
         ykey = os.getenv("YOUTUBE_API_KEY", "").strip()
         self.twitch = TwitchClient(self.session, tid, tsecret) if tid and tsecret else None
         self.youtube = YouTubeClient(self.session, ykey) if ykey else None
-        if self.twitch or self.youtube:
+        if self.twitch or self.youtube or self._presence_available():
             self.poll.start()
         else:
-            log.info("No Twitch or YouTube keys set, so stream alerts are switched off")
+            log.info("No Twitch or YouTube keys and no Presence Intent, so stream alerts are switched off")
 
     async def cog_unload(self):
         self.poll.cancel()
@@ -86,31 +89,63 @@ class Streams(commands.Cog):
     async def _wait_ready(self):
         await self.bot.wait_until_ready()
 
-    async def _poll_guild(self, guild: discord.Guild, youtube_due: bool):
+    def _presence_available(self) -> bool:
+        return bool(getattr(getattr(self.bot, "intents", None), "presences", False))
+
+    def _presence_enabled(self, guild: discord.Guild) -> bool:
+        return self._presence_available() and self.bot.settings.get(guild.id, "streams:presence", "1") != "0"
+
+    def _presence_streams(self, guild: discord.Guild, links: list[dict]) -> dict:
+        """key -> (LiveStream, user_id) for members whose Discord status says they're streaming on Twitch or YouTube."""
+        found: dict = {}
+        if not self._presence_enabled(guild):
+            return found
+        for member in list(getattr(guild, "members", [])):
+            if member.bot:
+                continue
+            for activity in member.activities:
+                if not isinstance(activity, discord.Streaming):
+                    continue
+                stream = presence_stream(
+                    activity.url or "", getattr(activity, "details", None) or activity.name or "", activity.game or "",
+                    member.display_name, member.id, links,
+                )
+                if stream is not None:
+                    found.setdefault(stream.key, (stream, member.id))
+                    break
+        return found
+
+    async def _poll_guild(self, guild: discord.Guild, youtube_due: bool = True, tick: bool = True):
+        """One pass for a server. tick=True is the timer: it asks the APIs and can end streams.
+        tick=False is a Discord status change: it can only start alerts, so a flickering status can't end one."""
+        lock = self._locks.setdefault(guild.id, asyncio.Lock())
+        async with lock:
+            await self._poll_locked(guild, youtube_due, tick)
+
+    async def _poll_locked(self, guild: discord.Guild, youtube_due: bool, tick: bool):
         settings = self.bot.settings
         links = load_links(settings, guild.id)
         state = load_state(settings, guild.id)
-        if not links and not state:
+        presence = self._presence_streams(guild, links)
+        if not links and not state and not presence:
             return
         by_key = {link_key(l["platform"], l["channel_id"]): l for l in links}
         live_now: dict = {}
-        polled: set[str] = set(k for k in state if k not in by_key)  # links that were removed: let them end
+        polled: set[str] = set(k for k in state if k not in by_key) if tick else set()  # removed links end
 
         twitch_links = [l for l in links if l["platform"] == TWITCH]
-        if twitch_links and self.twitch:
+        if tick and twitch_links and self.twitch:
             games = {l["channel_id"]: l.get("game", "") for l in twitch_links}
             try:
                 streams = await self.twitch.get_streams([l["channel_id"] for l in twitch_links], games)
-            except StreamAPIError as exc:
-                log.warning("Twitch poll failed: %s", exc)
-            except aiohttp.ClientError as exc:
+            except (StreamAPIError, aiohttp.ClientError) as exc:
                 log.warning("Twitch poll failed: %s", exc)
             else:
                 live_now.update({s.key: s for s in streams})
                 polled.update(link_key(TWITCH, l["channel_id"]) for l in twitch_links)
 
         youtube_links = [l for l in links if l["platform"] == YOUTUBE]
-        if youtube_links and self.youtube and youtube_due:
+        if tick and youtube_links and self.youtube and youtube_due:
             try:
                 streams = await self.youtube.live_now([l["channel_id"] for l in youtube_links])
             except (StreamAPIError, aiohttp.ClientError) as exc:
@@ -118,6 +153,12 @@ class Streams(commands.Cog):
             else:
                 live_now.update({s.key: s for s in streams})
                 polled.update(link_key(YOUTUBE, l["channel_id"]) for l in youtube_links)
+
+        # Discord's own "Streaming" status counts too. The API's richer data wins when both know about a stream.
+        for key, (stream, user_id) in presence.items():
+            live_now.setdefault(key, stream)
+            by_key.setdefault(key, {"user_id": user_id, "platform": stream.platform, "channel_id": stream.channel_id,
+                                    "name": stream.name, "game": stream.game})
 
         new_state, actions = diff_live(state, live_now, polled, time.time())
         for action, key in actions:
@@ -133,6 +174,20 @@ class Streams(commands.Cog):
                 log.warning("Couldn't update the stream post for %s: %s", key, exc)
         if new_state != state:
             save_state(settings, guild.id, new_state)
+
+    @commands.Cog.listener()
+    async def on_presence_update(self, before: discord.Member, after: discord.Member):
+        if after.bot or not self._presence_enabled(after.guild):
+            return
+        started = {a.url for a in after.activities if isinstance(a, discord.Streaming)} - {
+            a.url for a in before.activities if isinstance(a, discord.Streaming)
+        }
+        if not started:
+            return   # status changes constantly (idle, game switches); only a new stream matters
+        try:
+            await self._poll_guild(after.guild, tick=False)
+        except Exception:
+            log.exception("Presence-triggered stream check failed for guild %s", after.guild.id)
 
     async def _announce(self, guild, link, stream, entry: dict, resume: bool):
         member = guild.get_member(link["user_id"])
@@ -278,6 +333,17 @@ class Streams(commands.Cog):
             "\n".join(lines)[:1900], ephemeral=True, allowed_mentions=discord.AllowedMentions.none()
         )
 
+    @stream.command(name="presence", description="Staff: turn alerts from Discord's Streaming status on or off")
+    @app_commands.describe(enabled="Post an alert when a member's Discord status shows them streaming on Twitch or YouTube")
+    async def presence(self, interaction: discord.Interaction, enabled: bool):
+        if not is_staff(self.bot, interaction.user):
+            return await interaction.response.send_message("Only staff can change this.", ephemeral=True)
+        self.bot.settings.set(interaction.guild.id, "streams:presence", "1" if enabled else "0")
+        note = "" if self._presence_available() else " (the Presence Intent is off for this bot, so it won't do anything until that's on)"
+        await interaction.response.send_message(
+            f"Alerts from Discord's Streaming status are now **{'on' if enabled else 'off'}**{note}.", ephemeral=True
+        )
+
     @stream.command(name="status", description="Staff: check that stream alerts are set up")
     async def status(self, interaction: discord.Interaction):
         if not is_staff(self.bot, interaction.user):
@@ -289,6 +355,11 @@ class Streams(commands.Cog):
         lines = [
             f"Twitch: {'on' if self.twitch else 'off (set TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET)'}",
             f"YouTube: {'on' if self.youtube else 'off (set YOUTUBE_API_KEY)'}",
+            "Discord Streaming status: " + (
+                "on" if self._presence_enabled(guild)
+                else "off (turned off with /stream presence)" if self._presence_available()
+                else "off (turn on Presence Intent in the Developer Portal; PRESENCE_INTENT must not be 0)"
+            ),
             f"Alerts go to: {where.mention if where else 'not set, run /setup run'}",
             f"Ping role: {role.mention if role else 'not created, run /setup run'}",
             f"Linked channels: {len(links)}",

@@ -27,6 +27,9 @@ class Quartermaster(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.members = True  # privileged: enable "Server Members Intent" in the Developer Portal
+        # privileged: enable "Presence Intent" too, for go-live alerts from Discord's Streaming status.
+        # Set PRESENCE_INTENT=0 to run without it (the bot refuses to start if it asks for an intent the portal hasn't enabled).
+        intents.presences = os.getenv("PRESENCE_INTENT", "1").strip() != "0"
         super().__init__(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
         self.settings = Settings(os.getenv("DB_PATH", "quartermaster.db"))
         self.tree.on_error = self.on_tree_error

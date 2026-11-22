@@ -11,7 +11,7 @@ import pytest  # noqa: E402
 from qm.db import Settings  # noqa: E402
 from qm.layout import ROLE_SPECS, ROLE_STREAMS  # noqa: E402
 from qm.streams import (  # noqa: E402
-    END_AFTER_MISSES, RESUME_WINDOW, TWITCH, YOUTUBE, LiveStream, StreamAPIError, TwitchClient, YouTubeClient,
+    END_AFTER_MISSES, PRESENCE_ID, presence_stream, youtube_video_id, RESUME_WINDOW, TWITCH, YOUTUBE, LiveStream, StreamAPIError, TwitchClient, YouTubeClient,
     add_link, diff_live, ended_embed, link_key, live_embed, load_links, load_state, parse_twitch,
     parse_twitch_stream, parse_youtube, parse_youtube_video, remove_link, save_links, save_state,
 )
@@ -349,16 +349,16 @@ def make_cog():
     settings = Settings(os.path.join(tempfile.mkdtemp(), "cog.db"))
     channel = FakeChannel()
     ping = SimpleNamespace(id=7, name=ROLE_STREAMS, mentionable=True, mention="<@&7>")
-    member = SimpleNamespace(id=42, display_name="Ace", display_avatar=SimpleNamespace(url="http://a"))
+    member = SimpleNamespace(id=42, display_name="Ace", display_avatar=SimpleNamespace(url="http://a"), bot=False, activities=[])
     guild = SimpleNamespace(
         id=1, roles=[ping], get_role=lambda rid: ping if rid == 7 else None,
         get_channel=lambda cid: channel if cid == 900 else None,
-        get_member=lambda uid: member if uid == 42 else None,
+        get_member=lambda uid: member if uid == 42 else None, members=[member],
     )
     settings.set(1, "channel:streams_clips", 900)
     settings.set(1, "role:stream_pings", 7)
     save_links(settings, 1, [{"user_id": 42, "platform": TWITCH, "channel_id": "ace", "name": "Ace", "game": ""}])
-    bot = SimpleNamespace(settings=settings, guilds=[guild])
+    bot = SimpleNamespace(settings=settings, guilds=[guild], intents=SimpleNamespace(presences=False))
     cog = Streams(bot)
     cog.twitch = FakeTwitch()
     return cog, guild, channel
@@ -404,3 +404,98 @@ def test_cog_skips_members_who_left_and_survives_a_platform_outage():
     for _ in range(5):
         run(cog2._poll_guild(guild2, youtube_due=False))
     assert "LIVE" in channel2.messages[1].embeds[0].author.name       # an outage doesn't end the stream
+
+
+# ---- Discord's Streaming status ----------------------------------------------------------------------------
+
+import discord  # noqa: E402
+
+
+def streaming(url, title="Pro Clubs night", game="EA SPORTS FC 27"):
+    return discord.Streaming(name="Twitch", url=url, details=title, state=game)
+
+
+def test_presence_stream_parsing():
+    link = {"user_id": 42, "platform": YOUTUBE, "channel_id": UC, "name": "Ace YT", "game": "FC 27"}
+    t = presence_stream("https://www.twitch.tv/Ace", "t", "FC", "Ace", 42, [])
+    assert (t.platform, t.channel_id, t.stream_id, t.key) == (TWITCH, "ace", PRESENCE_ID, "twitch:ace")
+    assert t.thumbnail.startswith("https://static-cdn.jtvnw.net/previews-ttv/live_user_ace-1280x720.jpg")
+    y = presence_stream("https://www.youtube.com/watch?v=abcdefghijk&feature=x", "t", "", "Ace", 42, [link])
+    assert y.key == f"youtube:{UC}" and y.stream_id == "abcdefghijk" and y.game == "FC 27" and y.name == "Ace YT"
+    anon = presence_stream("https://youtu.be/abcdefghijk", "t", "", "Ace", 7, [link])
+    assert anon.key == "youtube:presence-7"
+    assert presence_stream("https://kick.com/ace", "t", "", "Ace", 1, []) is None
+    assert presence_stream("https://www.twitch.tv/directory/game/x", "t", "", "Ace", 1, []) is None
+    assert youtube_video_id("https://www.youtube.com/live/abcdefghijk?feature=share") == "abcdefghijk"
+    assert youtube_video_id("https://www.youtube.com/@ace") is None
+
+
+def test_presence_sighting_matches_the_api_id_instead_of_double_posting():
+    p = LiveStream(TWITCH, "ace", PRESENCE_ID, "t", "", "u", "", "ace")
+    api = twitch_stream("s1")
+    state, actions = diff_live({}, {p.key: p}, set(), 1000)
+    assert actions == [("announce", p.key)]
+    state, actions = diff_live(state, {api.key: api}, {api.key}, 1060)     # API catches up
+    assert actions == [] and state[api.key]["stream_id"] == "s1"
+    state, actions = diff_live(state, {p.key: p}, set(), 1120)             # presence-only sighting later
+    assert actions == [] and state[api.key]["stream_id"] == "s1"
+
+
+def presence_cog(streaming_url=None, linked=False):
+    cog, guild, channel = make_cog()
+    cog.bot.intents.presences = True
+    member = guild.get_member(42)
+    if not linked:
+        save_links(cog.bot.settings, 1, [])
+    if streaming_url:
+        member.activities = [streaming(streaming_url)]
+    return cog, guild, channel, member
+
+
+def test_presence_alone_posts_once_and_only_the_timer_ends_it():
+    cog, guild, channel, member = presence_cog("https://www.twitch.tv/ace")
+    run(cog._poll_guild(guild, tick=False))
+    run(cog._poll_guild(guild, tick=False))
+    assert len(channel.sent) == 1
+    post = channel.messages[1]
+    assert post.embeds[0].title == "Pro Clubs night" and any(f.value == "EA SPORTS FC 27" for f in post.embeds[0].fields)
+
+    member.activities = []                                              # status flickers off
+    for _ in range(5):
+        run(cog._poll_guild(guild, tick=False))
+    assert "LIVE" in post.embeds[0].author.name                         # a status change alone never ends the post
+    for _ in range(END_AFTER_MISSES):
+        run(cog._poll_guild(guild, youtube_due=False))                  # the timer does
+    assert "ended" in post.embeds[0].description
+
+
+def test_presence_and_api_together_make_one_post_with_the_api_details():
+    cog, guild, channel, member = presence_cog("https://www.twitch.tv/ace", linked=True)
+    cog.twitch.live = [twitch_stream("s1", title="From the API")]
+    run(cog._poll_guild(guild, tick=False))      # Discord sees it first
+    run(cog._poll_guild(guild, youtube_due=False))  # then the API does
+    assert len(channel.sent) == 1
+    assert channel.messages[1].embeds[0].title == "Pro Clubs night"     # first sighting's details are kept
+
+
+def test_presence_can_be_switched_off_and_needs_the_intent():
+    cog, guild, channel, member = presence_cog("https://www.twitch.tv/ace")
+    cog.bot.settings.set(1, "streams:presence", "0")
+    run(cog._poll_guild(guild, tick=False))
+    assert channel.sent == []
+    cog.bot.settings.set(1, "streams:presence", "1")
+    cog.bot.intents.presences = False
+    run(cog._poll_guild(guild, tick=False))
+    assert channel.sent == []
+
+
+def test_presence_listener_reacts_only_to_a_new_stream():
+    cog, guild, channel, member = presence_cog("https://www.twitch.tv/ace")
+    before = SimpleNamespace(activities=[])
+    after = SimpleNamespace(bot=False, guild=guild, activities=member.activities)
+    run(cog.on_presence_update(before, after))
+    assert len(channel.sent) == 1
+    run(cog.on_presence_update(SimpleNamespace(activities=member.activities), after))   # same stream, just another update
+    other = SimpleNamespace(bot=False, guild=guild, activities=[discord.Game("FC 27")])
+    run(cog.on_presence_update(before, other))
+    assert len(channel.sent) == 1

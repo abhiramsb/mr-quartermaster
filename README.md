@@ -29,7 +29,8 @@ members, hands out roles, and lets MRFC Captains manage the squad. The football-
 - **`/reception preview`:** a random sample of each message (only you see it).
 - **`/rolepicker`:** repost the picker in the current channel.
 - **Go-live alerts:** members link a channel with `/stream link`, and when they go live on Twitch or YouTube the bot
-  posts an embed (title, game, thumbnail, watch link) in `#streams-n-clips`, pinging **Stream Pings**. The post is greyed
+  posts an embed (title, game, thumbnail, watch link) in `#streams-n-clips`, pinging **Stream Pings**. Members who show a
+  Twitch or YouTube "Streaming" status on Discord are announced instantly even without linking. The post is greyed
   out when the stream ends, and a stream that drops and returns within 20 minutes reuses its post instead of pinging again.
   See *Stream alerts* below.
 - **`#bot-logs`:** joins, leaves, role changes and bans.
@@ -75,11 +76,21 @@ read the preview. Channels outside the layout are never deleted.
 Anything not listed (for example an old `#locker-room`) stays where it is. The old empty categories can be deleted by hand.
 
 ## Stream alerts
-Commands: `/stream link <platform> <channel> [game]`, `/stream unlink <platform>`, `/stream list`, and `/stream status` (staff).
-Staff can pass `member` to link or unlink someone else. Each member can have one Twitch and one YouTube channel.
+Two sources feed the same alerts, and a stream both of them see is posted once.
 
-Alerts are off for a platform until its keys are set (see the variables below). A platform with no keys just says so when
-someone tries to link.
+1. **Discord's Streaming status** (instant, no keys, no linking). A member who has connected Twitch or YouTube in
+   *Settings → Connections* with "Display on profile" on shows as Streaming when they go live, and the bot posts it.
+   Needs the **Presence Intent** (see Setup). Staff can switch it on or off with `/stream presence`. It only starts alerts;
+   a status that flickers can never end one. Embed details are plainer (title and game from the status, a Twitch preview
+   image, no thumbnail for YouTube). Reliable for Twitch; YouTube depends on Discord's connection.
+2. **The platforms' APIs** (richer embed, works whatever the member's Discord settings). Members link a channel first.
+
+Commands: `/stream link <platform> <channel> [game]`, `/stream unlink <platform>`, `/stream list`, `/stream presence`
+and `/stream status` (staff). Staff can pass `member` to link or unlink someone else. Each member can have one Twitch and
+one YouTube channel.
+
+The API source is off for a platform until its keys are set (see the variables below). A platform with no keys just says
+so when someone tries to link.
 - **Twitch:** create a free app at https://dev.twitch.tv/console and copy the client ID and secret. Checked every minute.
   The game comes from Twitch.
 - **YouTube:** in Google Cloud, enable *YouTube Data API v3* and create an API key. Checked every two minutes, by looking
@@ -89,12 +100,14 @@ someone tries to link.
 
 Things to know:
 - Linking is on trust: the bot checks that the channel exists but can't prove it belongs to the member. Staff can remove any link.
-- A stream is ended only after two checks in a row say offline, and a platform outage never ends or re-posts a stream.
+- A stream is ended only after two timer checks in a row say offline, and a platform outage never ends or re-posts a stream.
+- Members who don't want to be announced can turn off "Display on profile" for their connection, or set their status to invisible.
 - Alerts can arrive a minute or two after going live, and YouTube can lag a little more.
 
 ## Setup
 1. **Developer Portal** (https://discord.com/developers/applications) -> your application -> **Bot**:
-   copy the token, and turn on **Server Members Intent** (privileged).
+   copy the token, and turn on **Server Members Intent** and **Presence Intent** (both privileged). If the bot won't start and
+   the log mentions privileged intents, one of these is off. You can run without presence by setting `PRESENCE_INTENT=0`.
 2. **Invite** the bot with this permission integer, `271666192`:
    `https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot+applications.commands&permissions=271666192`
    (View Channels, Send Messages, Embed Links, Read Message History, Manage Roles, Manage Channels, Connect, Speak.)
@@ -117,6 +130,7 @@ this layout*) and leaves every other channel alone. Its preview lists each chang
 | `GROUNDSKEEPER_BOT_ID` | optional: the scheduler bot's user ID, so `/setup` gives it `#mrfc-sessions` |
 | `COACH_BOT_ID` | optional: the coach bot's user ID, for `#mrfc-tactics` |
 | `SCOUT_BOT_ID` | optional: the scout bot's user ID, for `#mrfc-scouting` |
+| `PRESENCE_INTENT` | default on; set `0` to run without the Presence Intent (no alerts from Discord's Streaming status) |
 | `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` | optional: switch on Twitch go-live alerts |
 | `YOUTUBE_API_KEY` | optional: switch on YouTube go-live alerts |
 

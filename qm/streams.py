@@ -21,6 +21,7 @@ PLATFORM_COLOR = {TWITCH: 0x9146FF, YOUTUBE: 0xFF0000}
 END_AFTER_MISSES = 2          # polls in a row that must say "offline" before we call a stream ended
 RESUME_WINDOW = 20 * 60       # seconds; a stream that comes back within this window reuses its old post
 ENDED_COLOR = 0x7F8C8D
+PRESENCE_ID = "presence"      # stream_id used when we only know about a stream from Discord's "Streaming" status
 
 
 class StreamAPIError(Exception):
@@ -68,6 +69,14 @@ def parse_twitch(text: str) -> Optional[str]:
         t = m.group(1)
     t = t.lstrip("@").lower()
     return t if _TWITCH_LOGIN.match(t) else None
+
+
+_YT_VIDEO = re.compile(r"(?:youtube\.com/(?:watch\?(?:[^#\s]*&)?v=|live/|embed/)|youtu\.be/)([A-Za-z0-9_-]{11})", re.I)
+
+
+def youtube_video_id(url: str) -> Optional[str]:
+    m = _YT_VIDEO.search(url or "")
+    return m.group(1) if m else None
 
 
 def parse_youtube(text: str) -> Optional[tuple[str, str]]:
@@ -133,6 +142,40 @@ def remove_link(links: list[dict], user_id: int, platform: str) -> tuple[list[di
     return kept, len(kept) != len(links)
 
 
+# ---- Discord's own "Streaming" status ----------------------------------------------------------------------
+
+def presence_stream(
+    url: str, title: str, game: str, display_name: str, user_id: int, links: list[dict]
+) -> Optional[LiveStream]:
+    """Turn a member's Discord "Streaming" activity into a LiveStream, or None for other platforms.
+
+    A Twitch stream is keyed by its login, so it matches the same member's /stream link and is never posted
+    twice. A YouTube stream is keyed by the member's linked channel if they have one (its video ID then also
+    matches what the API reports); otherwise by their Discord ID.
+    """
+    url = (url or "").strip()
+    mine = {l["platform"]: l for l in links if l["user_id"] == user_id}
+    if "twitch.tv" in url.lower():
+        login = parse_twitch(url)
+        if not login:
+            return None
+        linked = mine.get(TWITCH)
+        thumb = f"https://static-cdn.jtvnw.net/previews-ttv/live_user_{login}-1280x720.jpg?t={int(time.time() // 60)}"
+        return LiveStream(
+            platform=TWITCH, channel_id=login, stream_id=PRESENCE_ID, title=title or "", url=f"https://www.twitch.tv/{login}",
+            game=game or (linked or {}).get("game", ""), thumbnail=thumb, name=login,
+        )
+    video = youtube_video_id(url)
+    if not video:
+        return None
+    linked = mine.get(YOUTUBE)
+    return LiveStream(
+        platform=YOUTUBE, channel_id=linked["channel_id"] if linked else f"presence-{user_id}", stream_id=video,
+        title=title or "", game=game or (linked or {}).get("game", ""), url=f"https://www.youtube.com/watch?v={video}",
+        thumbnail="", name=(linked or {}).get("name") or display_name,
+    )
+
+
 # ---- who just went live ------------------------------------------------------------------------------------
 
 def diff_live(
@@ -154,9 +197,12 @@ def diff_live(
         entry = new.get(key)
         if entry is not None and entry.get("live"):
             entry["misses"] = 0
-            if entry.get("stream_id") != stream.stream_id:
-                new[key] = {"live": True, "stream_id": stream.stream_id, "message_id": None, "ended_at": None, "misses": 0}
+            old_id, new_id = entry.get("stream_id"), stream.stream_id
+            if old_id != new_id and PRESENCE_ID not in (old_id, new_id):
+                new[key] = {"live": True, "stream_id": new_id, "message_id": None, "ended_at": None, "misses": 0}
                 actions.append(("announce", key))
+            elif old_id == PRESENCE_ID and new_id != PRESENCE_ID:
+                entry["stream_id"] = new_id   # the API has caught up with what Discord showed; keep the same post
             continue
         ended_at = entry.get("ended_at") if entry else None
         if entry is not None and ended_at is not None and now - ended_at <= RESUME_WINDOW and entry.get("message_id"):
