@@ -26,3 +26,12 @@ def test_roles_status_handles_missing_role(monkeypatch):
     assert out.count("\u2b1c") == len(views.PICKER_ROLES)
 
 
+
+
+def test_welcome_button_custom_id_roundtrip():
+    import re
+    from qm.views import WelcomeButton, welcome_label
+    item = WelcomeButton(123456789012345678, 3)
+    assert item.item.custom_id == "qm:welcome:123456789012345678"
+    assert re.fullmatch(WelcomeButton.__discord_ui_compiled_template__.pattern, item.item.custom_id)
+    assert welcome_label(0) == "Welcome" and welcome_label(3) == "Welcome (3)"
