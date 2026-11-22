@@ -232,7 +232,7 @@ def test_existing_channels_map_to_the_new_layout():
     expected = {
         "reception": "the-reception", "rules": "rules", "pick_roles": "get-roles",
         "mrfc_sessions": "sessions", "mrfc_tactics": "tactics", "mrfc_scouting": "scouting",
-        "mrfc_captains": "captains-corner", "mrfc_lobby": "Lobby", "lounge1": "Timepass",
+        "mrfc_captains": "captains-corner", "mrfc_locker_room": "locker-room", "mrfc_lobby": "Lobby", "lounge1": "Timepass",
         "general": "general", "streams_clips": "streams-n-clips",
     }
     claimed = set()
@@ -244,8 +244,15 @@ def test_existing_channels_map_to_the_new_layout():
                 claimed.add(ch.id)
                 found[spec.key] = ch.name
     assert found == expected
-    # nothing is claimed twice, and locker-room is deliberately left alone
-    assert "locker-room" not in found.values()
+    # nothing is claimed twice
+    assert len(set(found.values())) == len(found)
+
+
+def test_locker_room_is_squad_only():
+    cat, ch = find("mrfc_locker_room")
+    assert ch.name == "mrfc-locker-room"
+    assert can_post([ROLE_SQUAD], cat, ch)
+    assert not can_view([ROLE_RECRUIT, ROLE_CLUB], cat, ch)
 
 
 def test_locate_reports_rename_and_move():

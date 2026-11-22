@@ -70,10 +70,11 @@ read the preview. Channels outside the layout are never deleted.
 | `#tactics` | `#mrfc-tactics` |
 | `#scouting` | `#mrfc-scouting` |
 | `#captains-corner` | `#mrfc-captains` |
+| `#locker-room` | `#mrfc-locker-room` (Squad and Captains only) |
 | voice `Lobby` | `MRFC Lobby` |
 | voice `Timepass` | `General Lounge` |
 
-Anything not listed (for example an old `#locker-room`) stays where it is. The old empty categories can be deleted by hand.
+Anything not listed stays where it is. The old empty categories can be deleted by hand.
 
 ## Stream alerts
 Two sources feed the same alerts, and a stream both of them see is posted once.
