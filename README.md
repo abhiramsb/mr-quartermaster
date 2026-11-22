@@ -20,7 +20,8 @@ members, hands out roles, and lets MRFC Captains manage the squad. The football-
 - **`/announce`:** staff post an announcement embed, optionally pinging a role.
 - **`/reception line add | list | remove`:** add your own lines to the welcome, send-off or football pools.
 - **`/reception gif add | list | remove`:** curate the GIFs (https links; direct `.gif` links show inside the message,
-  Tenor or Giphy page links show as an animation under it). No GIF is shown until you add some.
+  Tenor or Giphy page links show as an animation under it). The lists start with a curated set from `qm/seed_gifs.json` (animals and lettering,
+  loaded once per server, never overwriting your changes).
 - **`/reception preview`:** a random sample of each message (only you see it).
 - **`/rolepicker`:** repost the picker in the current channel.
 - **`#bot-logs`:** joins, leaves, role changes and bans.

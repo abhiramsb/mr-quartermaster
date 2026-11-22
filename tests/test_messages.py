@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from qm.db import Settings  # noqa: E402
 from qm.layout import ROLE_CLUB  # noqa: E402
 from qm.messages import (  # noqa: E402
-    GAME_MESSAGE_COOLDOWN, GAME_WELCOMES, KINDS, MAX_LINE_LENGTH, cooldown_ok, get_items, is_direct_image, pick_gif, pick_line, render, save_items,
+    GAME_MESSAGE_COOLDOWN, GAME_WELCOMES, KINDS, MAX_LINE_LENGTH, SEED_GIFS, cooldown_ok, get_items, gif_items, is_direct_image, pick_gif, pick_line, render, save_items,
     valid_gif_url,
 )
 
@@ -103,12 +103,34 @@ def test_gif_url_rules():
     assert not is_direct_image("https://tenor.com/view/some-gif-123")
 
 
+def test_seed_file_is_valid_and_complete():
+    assert set(SEED_GIFS) == set(KINDS)
+    assert {k: len(v) for k, v in SEED_GIFS.items()} == {"welcome": 7, "farewell": 6, "football": 5, "football_leave": 4}
+    everything = [u for urls in SEED_GIFS.values() for u in urls]
+    assert len(everything) == len(set(everything))
+    assert all(valid_gif_url(u) and u.startswith("https://tenor.com/view/") for u in everything)
+
+
+def test_seed_fills_empty_lists_once_and_never_overwrites_admin_changes():
+    bot = make_bot()
+    first = gif_items(bot, 1, "welcome")
+    assert first == SEED_GIFS["welcome"]
+    assert pick_gif(bot, 1, "welcome") in first
+    # admin removes everything: it must stay empty, not re-seed
+    save_items(bot, 1, "gifs", "welcome", [])
+    assert gif_items(bot, 1, "welcome") == []
+    assert pick_gif(bot, 1, "welcome") is None
+    # admin adds their own before the list was ever used: seed does not clobber it
+    save_items(bot, 1, "gifs", "farewell", ["https://media.tenor.com/mine.gif"])
+    assert gif_items(bot, 1, "farewell") == ["https://media.tenor.com/mine.gif"]
+    # another server gets its own seeded copy
+    assert gif_items(bot, 2, "welcome") == SEED_GIFS["welcome"]
+
+
 def test_custom_lines_and_gifs_are_stored_per_server_and_picked():
     bot = make_bot()
-    assert pick_gif(bot, 1, "welcome") is None  # no GIF until the admin adds one
     save_items(bot, 1, "gifs", "welcome", ["https://media.tenor.com/a.gif"])
     assert pick_gif(bot, 1, "welcome") == "https://media.tenor.com/a.gif"
-    assert pick_gif(bot, 2, "welcome") is None  # another server is unaffected
     save_items(bot, 1, "lines", "welcome", ["Custom line for {user}"])
     seen = {pick_line(bot, 1, "welcome") for _ in range(400)}
     assert "Custom line for {user}" in seen

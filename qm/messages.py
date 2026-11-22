@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import random
 import time
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
@@ -150,8 +151,30 @@ def pick_line(bot, guild_id: int, kind: str) -> str:
     return random.choice(pool)
 
 
+def _load_seed() -> dict[str, list[str]]:
+    try:
+        data = json.loads((Path(__file__).parent / "seed_gifs.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {k: [u for u in v if isinstance(u, str)] for k, v in data.items() if isinstance(v, list)}
+
+
+SEED_GIFS: dict[str, list[str]] = _load_seed()
+
+
+def gif_items(bot, guild_id: int, kind: str) -> list[str]:
+    """The GIF list for a kind. The first time a list is used it is filled from seed_gifs.json (only if empty,
+    and only once), so GIFs an admin adds or removes later are never overwritten."""
+    marker = f"gifs_seeded:{kind}"
+    if not bot.settings.get(guild_id, marker):
+        bot.settings.set(guild_id, marker, "1")
+        if not get_items(bot, guild_id, "gifs", kind):
+            save_items(bot, guild_id, "gifs", kind, list(SEED_GIFS.get(kind, [])))
+    return get_items(bot, guild_id, "gifs", kind)
+
+
 def pick_gif(bot, guild_id: int, kind: str) -> Optional[str]:
-    gifs = get_items(bot, guild_id, "gifs", kind)
+    gifs = gif_items(bot, guild_id, kind)
     return random.choice(gifs) if gifs else None
 
 

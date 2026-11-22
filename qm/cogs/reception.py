@@ -11,6 +11,7 @@ from ..messages import (
     MAX_CUSTOM_ITEMS,
     MAX_LINE_LENGTH,
     get_items,
+    gif_items,
     pick_gif,
     pick_line,
     render,
@@ -124,7 +125,7 @@ class Reception(commands.Cog):
         url = url.strip()
         if not valid_gif_url(url):
             return await interaction.response.send_message("That needs to be a full https:// link.", ephemeral=True)
-        items = get_items(self.bot, interaction.guild_id, "gifs", kind.value)
+        items = gif_items(self.bot, interaction.guild_id, kind.value)
         if url in items:
             return await interaction.response.send_message("That GIF is already in the list.", ephemeral=True)
         if len(items) >= MAX_CUSTOM_ITEMS:
@@ -137,7 +138,7 @@ class Reception(commands.Cog):
     @app_commands.choices(kind=KIND_CHOICES)
     @app_commands.checks.has_permissions(administrator=True)
     async def gif_list(self, interaction: discord.Interaction, kind: app_commands.Choice[str]):
-        items = get_items(self.bot, interaction.guild_id, "gifs", kind.value)
+        items = gif_items(self.bot, interaction.guild_id, kind.value)
         body = "\n".join(f"{i}. <{u}>" for i, u in enumerate(items, 1)) or "None yet. No GIF is shown until you add some."
         await interaction.response.send_message(f"**{kind.name}** GIFs:\n{body}"[:1900], ephemeral=True)
 
@@ -145,7 +146,7 @@ class Reception(commands.Cog):
     @app_commands.choices(kind=KIND_CHOICES)
     @app_commands.checks.has_permissions(administrator=True)
     async def gif_remove(self, interaction: discord.Interaction, kind: app_commands.Choice[str], number: int):
-        items = get_items(self.bot, interaction.guild_id, "gifs", kind.value)
+        items = gif_items(self.bot, interaction.guild_id, kind.value)
         if not 1 <= number <= len(items):
             return await interaction.response.send_message("No GIF with that number.", ephemeral=True)
         removed = items.pop(number - 1)
@@ -159,7 +160,7 @@ class Reception(commands.Cog):
         values = values_for(self.bot, guild, interaction.user)
         parts = []
         for kind in KINDS.values():
-            gifs = len(get_items(self.bot, guild.id, "gifs", kind.key))
+            gifs = len(gif_items(self.bot, guild.id, kind.key))
             parts.append(f"**{kind.label}** ({gifs} GIF(s))\n{render(pick_line(self.bot, guild.id, kind.key), values)}")
         await interaction.response.send_message("\n\n".join(parts), ephemeral=True,
                                                 allowed_mentions=discord.AllowedMentions.none())
