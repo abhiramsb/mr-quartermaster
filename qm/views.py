@@ -4,10 +4,7 @@ from __future__ import annotations
 import discord
 
 from .layout import ROLE_CAPTAIN, ROLE_CLUB, ROLE_EVENTS, ROLE_NEWS, ROLE_SQUAD, ROLE_STREAMS
-import json
-import re
-
-from .messages import game_leave, game_welcome, pick_gif, pick_line, render, send_embed, values_for
+from .messages import game_leave, game_welcome
 from .util import get_role, has_role, slug
 
 # (role name, label, emoji, style)
@@ -114,58 +111,3 @@ async def post_picker(bot, channel: discord.TextChannel) -> discord.Message:
     message = await channel.send(embed=picker_embed(), view=RolePickerView())
     bot.settings.set(channel.guild.id, "picker_message", message.id)
     return message
-
-
-# ---- the "Welcome" button under a new recruit's post in #reception ----
-
-def welcome_label(count: int) -> str:
-    return "Welcome" if count <= 0 else f"Welcome ({count})"
-
-
-class WelcomeButton(discord.ui.DynamicItem[discord.ui.Button], template=r"qm:welcome:(?P<id>[0-9]+)"):
-    """One click welcomes the newcomer: posts a line and a GIF as a reply. The newcomer's id lives in the custom_id,
-    so the button keeps working after a restart."""
-
-    def __init__(self, newcomer_id: int, count: int = 0):
-        super().__init__(discord.ui.Button(label=welcome_label(count), emoji="👋", style=discord.ButtonStyle.success,
-                                           custom_id=f"qm:welcome:{newcomer_id}"))
-        self.newcomer_id = newcomer_id
-
-    @classmethod
-    async def from_custom_id(cls, interaction, item, match: re.Match):
-        return cls(int(match["id"]))
-
-    async def callback(self, interaction: discord.Interaction):
-        bot, guild = interaction.client, interaction.guild
-        if guild is None:
-            return
-        newcomer = guild.get_member(self.newcomer_id)
-        if newcomer is None:
-            return await interaction.response.send_message("They've already left the server.", ephemeral=True)
-        if interaction.user.id == newcomer.id:
-            return await interaction.response.send_message("You can't welcome yourself, Recruit. 😄", ephemeral=True)
-        key = f"welcomed:{newcomer.id}"
-        try:
-            greeters = [int(x) for x in json.loads(bot.settings.get(guild.id, key) or "[]")]
-        except (ValueError, TypeError):
-            greeters = []
-        if interaction.user.id in greeters:
-            return await interaction.response.send_message(f"You've already welcomed {newcomer.display_name}.", ephemeral=True)
-        greeters.append(interaction.user.id)
-        bot.settings.set(guild.id, key, json.dumps(greeters))
-        # Reply publicly and update the count on the button.
-        await interaction.response.edit_message(view=welcome_view(newcomer.id, len(greeters)))
-        values = values_for(bot, guild, interaction.user)
-        values["new"] = newcomer.mention
-        embed = discord.Embed(description=render(pick_line(bot, guild.id, "greet"), values), colour=discord.Colour.gold())
-        try:
-            await send_embed(interaction.channel, embed, pick_gif(bot, guild.id, "greet"),
-                             discord.AllowedMentions(users=[newcomer]), reference=interaction.message)
-        except discord.HTTPException:
-            pass
-
-
-def welcome_view(newcomer_id: int, count: int = 0) -> discord.ui.View:
-    view = discord.ui.View(timeout=None)
-    view.add_item(WelcomeButton(newcomer_id, count))
-    return view

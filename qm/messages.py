@@ -119,7 +119,7 @@ class MessageKind:
 KINDS: dict[str, MessageKind] = {
     "welcome": MessageKind("welcome", "Welcome (server-wide)", WELCOME_LINES),
     "farewell": MessageKind("farewell", "Send-off (server-wide)", FAREWELL_LINES),
-    "greet": MessageKind("greet", "Reply when someone clicks the Welcome button (use {user} for the greeter, {new} for the newcomer)", GREET_LINES),
+    "greet": MessageKind("greet", "Reply when a member welcomes a newcomer in #reception (use {user} for the greeter, {new} for the newcomer)", GREET_LINES),
     "football": MessageKind("football", "Football welcome (after picking Football Club)", FOOTBALL_LINES),
     "football_leave": MessageKind("football_leave", "Football send-off (after deselecting Football Club)", FOOTBALL_LEAVE_LINES),
 }
@@ -225,8 +225,7 @@ def values_for(bot, guild: discord.Guild, member: discord.abc.User) -> dict[str,
 
 
 async def send_embed(channel: discord.abc.Messageable, embed: discord.Embed, gif: Optional[str],
-                     mentions: discord.AllowedMentions, view: Optional[discord.ui.View] = None,
-                     reference: Optional[discord.Message] = None) -> None:
+                     mentions: discord.AllowedMentions) -> None:
     """Send the embed. A direct image/GIF link goes inside it; any other link (Tenor or Giphy page)
     follows as its own message so Discord shows it as an animation."""
     link_only: Optional[str] = None
@@ -235,13 +234,7 @@ async def send_embed(channel: discord.abc.Messageable, embed: discord.Embed, gif
             embed.set_image(url=gif)
         else:
             link_only = gif
-    kwargs = {}
-    if view is not None:
-        kwargs["view"] = view
-    if reference is not None:
-        kwargs["reference"] = reference
-        kwargs["mention_author"] = False
-    await channel.send(embed=embed, allowed_mentions=mentions, **kwargs)
+    await channel.send(embed=embed, allowed_mentions=mentions)
     if link_only:
         await channel.send(link_only, allowed_mentions=discord.AllowedMentions.none())
 
