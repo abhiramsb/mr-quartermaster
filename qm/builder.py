@@ -78,7 +78,8 @@ async def ensure_layout(bot, guild: discord.Guild, roles: dict[str, Optional[dis
             if not dry_run:
                 category = await guild.create_category(cat_spec.name, overwrites=cat_overwrites, reason=REASON)
         else:
-            others = [c for c in category.channels if c.name.lower() not in {s.name.lower() for s in cat_spec.channels}]
+            known = {s.name.lower() for s in cat_spec.channels} | {s.renamed_from.lower() for s in cat_spec.channels if s.renamed_from}
+            others = [c for c in category.channels if c.name.lower() not in known]
             note = f" (it also holds {len(others)} channel(s) that aren't part of the layout)" if others else ""
             log.append(f"♻ category **{cat_spec.name}** exists, so I'll update its permissions{note}")
             if not dry_run:
@@ -101,6 +102,12 @@ async def ensure_layout(bot, guild: discord.Guild, roles: dict[str, Optional[dis
                 existing = discord.utils.find(
                     lambda c: c.name.lower() == ch_spec.name.lower() and c.type == channel_type, category.channels
                 )
+            renamed = False
+            if existing is None and category is not None and ch_spec.renamed_from:
+                existing = discord.utils.find(
+                    lambda c: c.name.lower() == ch_spec.renamed_from.lower() and c.type == channel_type, category.channels
+                )
+                renamed = existing is not None
             if existing is None:
                 log.append(f"➕ create #{ch_spec.name}")
                 if dry_run or category is None:
@@ -111,6 +118,10 @@ async def ensure_layout(bot, guild: discord.Guild, roles: dict[str, Optional[dis
                     existing = await category.create_text_channel(
                         ch_spec.name, topic=ch_spec.topic or None, overwrites=overwrites, reason=REASON
                     )
+            elif renamed:
+                log.append(f"✏ rename #{ch_spec.renamed_from} to #{ch_spec.name} and update its permissions")
+                if not dry_run:
+                    await existing.edit(name=ch_spec.name, topic=ch_spec.topic or None, overwrites=overwrites, reason=REASON)
             else:
                 log.append(f"♻ #{ch_spec.name} exists, so I'll update its permissions")
                 if not dry_run:

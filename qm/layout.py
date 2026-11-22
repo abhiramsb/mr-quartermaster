@@ -58,6 +58,7 @@ class ChannelSpec:
     topic: str = ""
     access: Mapping[str, str] = field(default_factory=dict)  # overrides on top of the category's
     bot_env: str = ""             # env var holding another bot's user ID that must be able to post here
+    renamed_from: str = ""        # an older channel name; if found, the channel is renamed instead of duplicated
 
 
 @dataclass(frozen=True)
@@ -88,8 +89,6 @@ LAYOUT: tuple[CategorySpec, ...] = (
                         access={ROLE_CAPTAIN: RW}),
             ChannelSpec("mrfc_chat", "mrfc-chat", topic="Football chat.",
                         access={ROLE_CLUB: RW, ROLE_SQUAD: RW, ROLE_CAPTAIN: RW}),
-            ChannelSpec("mrfc_streams_clips", "mrfc-streams-n-clips", topic="Streams, goals and funny moments.",
-                        access={ROLE_CLUB: RW, ROLE_SQUAD: RW, ROLE_CAPTAIN: RW}),
             ChannelSpec("mrfc_sessions", "mrfc-sessions", topic="Session RSVPs from MRFC_GroundsKeeper.",
                         access={ROLE_CAPTAIN: RW}, bot_env="GROUNDSKEEPER_BOT_ID"),
             ChannelSpec("mrfc_tactics", "mrfc-tactics", topic="Squad tactics and the coach's daily debrief.",
@@ -109,7 +108,8 @@ LAYOUT: tuple[CategorySpec, ...] = (
         {EVERYONE: HIDE, ROLE_RECRUIT: RW, **_STAFF},
         (
             ChannelSpec("general", "general", topic="Main chat."),
-            ChannelSpec("media", "media", topic="Clips and screenshots."),
+            ChannelSpec("streams_clips", "streams-n-clips", topic="Live alerts, clips, screenshots and highlights.",
+                        renamed_from="media"),
             ChannelSpec("lfg", "looking-for-group", topic="Find people to play any game with."),
             ChannelSpec("off_topic", "off-topic"),
             ChannelSpec("lounge1", "General Lounge", kind="voice"),

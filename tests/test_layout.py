@@ -121,8 +121,6 @@ def test_football_club_member_access():
         cat, ch = find(key)
         assert can_view(club, cat, ch), key
     assert can_post(club, *find("mrfc_chat"))
-    assert can_post(club, *find("mrfc_streams_clips"))
-    assert not can_view([ROLE_RECRUIT], *find("mrfc_streams_clips"))
     assert can_post(club, *find("mrfc_lobby"))
     assert not can_post(club, *find("mrfc_announcements"))
     assert not can_post(club, *find("mrfc_sessions"))
@@ -181,3 +179,11 @@ if __name__ == "__main__":
                 failed += 1
                 print("FAIL", name, repr(e))
     sys.exit(1 if failed else 0)
+
+
+def test_streams_clips_is_general_and_renames_media():
+    cat, ch = find("streams_clips")
+    assert cat.name == "GENERAL"
+    assert ch.name == "streams-n-clips" and ch.renamed_from == "media"
+    assert can_post([ROLE_RECRUIT], cat, ch)
+    assert not any(c.key == "mrfc_streams_clips" for _, c in _channels())
