@@ -9,6 +9,8 @@ from discord.ext import commands
 
 from ..builder import build
 from ..layout import ROLE_CAPTAIN, ROLE_CLUB, ROLE_RECRUIT, ROLE_SPECS, ROLE_SQUAD
+from ..messages import pick_gif, send_embed
+from ..migrate import announcement_members, mention_blocks, plan_migration
 from ..util import chunk_lines, get_channel, get_role
 from ..views import post_picker
 
@@ -67,23 +69,23 @@ class Setup(commands.Cog):
         header = "**Preview only. Nothing was changed.** Run again with `dry_run: False` to apply." if dry_run else "**Done.**"
         await _reply_chunks(interaction, header, log)
 
-    @setup.command(name="migrate", description="Give existing members the new roles (preview by default)")
+    @setup.command(name="migrate", description="Give existing members their new roles (preview by default)")
     @app_commands.describe(
         dry_run="True shows what would change without changing anything",
-        give_recruit_to_all="Give Recruit to every member who doesn't have it",
-        captain_from="Old role whose holders become MRFC Captain (also Squad and Football Club)",
-        squad_from="Old role whose holders become MRFC Squad (also Football Club)",
-        club_from="Old role whose holders become Football Club",
+        captain="Who becomes MRFC Captain (default: the server owner). Nobody else gets Captain or Squad",
+        give_football_club_to_all="Give every existing member Football Club (with Recruit)",
+        announce="Also post the relaunch announcement and the football welcome in #reception",
+        remove_old_role="An old role to remove from everyone once they have the new ones",
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def migrate(
         self,
         interaction: discord.Interaction,
         dry_run: bool = True,
-        give_recruit_to_all: bool = True,
-        captain_from: Optional[discord.Role] = None,
-        squad_from: Optional[discord.Role] = None,
-        club_from: Optional[discord.Role] = None,
+        captain: Optional[discord.Member] = None,
+        give_football_club_to_all: bool = True,
+        announce: bool = False,
+        remove_old_role: Optional[discord.Role] = None,
     ):
         guild = interaction.guild
         await interaction.response.defer(ephemeral=True)
@@ -91,10 +93,10 @@ class Setup(commands.Cog):
             await guild.chunk()
 
         recruit = get_role(self.bot, guild, ROLE_RECRUIT)
-        captain = get_role(self.bot, guild, ROLE_CAPTAIN)
-        squad = get_role(self.bot, guild, ROLE_SQUAD)
+        captain_role = get_role(self.bot, guild, ROLE_CAPTAIN)
+        squad_role = get_role(self.bot, guild, ROLE_SQUAD)
         club = get_role(self.bot, guild, ROLE_CLUB)
-        needed = {"Recruit": recruit, "MRFC Captain": captain, "MRFC Squad": squad, "Football Club": club}
+        needed = {"Recruit": recruit, "MRFC Captain": captain_role, "MRFC Squad": squad_role, "Football Club": club}
         missing = [name for name, role in needed.items() if role is None]
         if missing:
             return await interaction.followup.send(
@@ -105,37 +107,90 @@ class Setup(commands.Cog):
             return await interaction.followup.send(
                 f"I can't assign: {', '.join(blocked)}. Move my role above them and try again.", ephemeral=True
             )
+        if remove_old_role is not None and (remove_old_role in needed.values() or not remove_old_role.is_assignable()):
+            return await interaction.followup.send(
+                "I can't remove that role (it's one of the new roles, or above my role).", ephemeral=True
+            )
 
-        plan: dict[discord.Member, list[discord.Role]] = {}
-        for member in guild.members:
-            if member.bot:
-                continue
-            wanted: list[discord.Role] = []
-            if give_recruit_to_all:
-                wanted.append(recruit)
-            if captain_from and captain_from in member.roles:
-                wanted += [captain, squad, club]
-            elif squad_from and squad_from in member.roles:
-                wanted += [squad, club]
-            if club_from and club_from in member.roles:
-                wanted.append(club)
-            to_add = [r for r in dict.fromkeys(wanted) if r not in member.roles]
-            if to_add:
-                plan[member] = to_add
+        captain_member = captain or guild.owner
+        if captain_member is None:
+            try:
+                captain_member = await guild.fetch_member(guild.owner_id)
+            except discord.HTTPException:
+                captain_member = None
+        if captain_member is None:
+            return await interaction.followup.send("I couldn't work out who the Captain should be. Pick one with `captain`.", ephemeral=True)
 
-        lines = [f"{m.display_name}: + {', '.join(r.name for r in roles)}" for m, roles in plan.items()]
+        plan = plan_migration(
+            guild.members,
+            recruit=recruit, club=club, captain_role=captain_role, squad_role=squad_role,
+            captain_member=captain_member, give_club_to_all=give_football_club_to_all, old_role=remove_old_role,
+        )
+        lines = [f"Captain: {captain_member.display_name}"]
+        for member, (add, remove) in plan.items():
+            bits = []
+            if add:
+                bits.append("+ " + ", ".join(r.name for r in add))
+            if remove:
+                bits.append("- " + ", ".join(r.name for r in remove))
+            lines.append(f"{member.display_name}: " + "; ".join(bits))
+
+        everyone, football = announcement_members(plan, captain_member)
+        reception = get_channel(self.bot, guild, "reception")
+        if announce and reception is None:
+            lines.append("⚠ I can't find #reception, so I can't announce. Run `/setup run` first.")
+            announce = False
+        if announce:
+            lines.append(f"📣 {'Would post' if dry_run else 'Posted'} the relaunch announcement and a roll call of "
+                         f"{len(everyone)} member(s) in #reception.")
+            if give_football_club_to_all and football:
+                lines.append(f"⚽ {'Would post' if dry_run else 'Posted'} one football welcome for {len(football)} member(s).")
+
         if not dry_run:
             failed = 0
-            for member, roles in plan.items():
+            for member, (add, remove) in plan.items():
                 try:
-                    await member.add_roles(*roles, reason="MR_Quartermaster /setup migrate")
+                    if add:
+                        await member.add_roles(*add, reason="MR_Quartermaster /setup migrate")
+                    if remove:
+                        await member.remove_roles(*remove, reason="MR_Quartermaster /setup migrate")
                 except discord.HTTPException:
                     failed += 1
             if failed:
                 lines.append(f"⚠ {failed} member(s) could not be updated.")
+            if announce and everyone:
+                await self._announce(guild, reception, everyone, football if give_football_club_to_all else [])
+
         header = (f"**Preview only.** {len(plan)} member(s) would change:" if dry_run
                   else f"**Done.** Updated {len(plan)} member(s):")
         await _reply_chunks(interaction, header, lines or ["Nobody needs changes."])
+
+    async def _announce(self, guild, reception, everyone, football) -> None:
+        """The one-off relaunch posts: an announcement with a roll call, then one combined football welcome."""
+        rules = get_channel(self.bot, guild, "rules")
+        picker = get_channel(self.bot, guild, "pick_roles")
+        embed = discord.Embed(
+            title="We've got a new look",
+            description=(
+                f"The server is now **{guild.name}**, rebuilt from the ground up. Everyone who was here is still "
+                f"here, so you're already a Recruit.\n\n"
+                f"Read {rules.mention if rules else '#rules'}, then pick your roles in "
+                f"{picker.mention if picker else '#pick-your-roles'}."
+            ),
+            colour=discord.Colour.blurple(),
+        )
+        await send_embed(reception, embed, pick_gif(self.bot, guild.id, "welcome"), discord.AllowedMentions.none())
+        for block in mention_blocks([m.mention for m in everyone]):
+            await reception.send(f"Roll call: {block}", allowed_mentions=discord.AllowedMentions(users=everyone))
+        if football:
+            names = " ".join(m.mention for m in football)
+            football_embed = discord.Embed(
+                title="⚽ MRFC Academy has opened its doors",
+                description=f"Everyone below has joined the football club: {names}\nMatches are scheduled in the MRFC section.",
+                colour=discord.Colour(0x2ECC71),
+            )
+            await send_embed(reception, football_embed, pick_gif(self.bot, guild.id, "football"),
+                             discord.AllowedMentions.none())
 
     @setup.command(name="status", description="Check what is configured and what needs fixing")
     @app_commands.checks.has_permissions(administrator=True)

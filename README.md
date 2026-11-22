@@ -14,7 +14,11 @@ members, hands out roles, and lets MRFC Captains manage the squad. The football-
 - **Role-picker** in `#pick-your-roles`: persistent buttons for **Football Club** (unlocks the MRFC section),
   **Event Pings** and **News Pings**.
 - **`/setup run`:** creates or updates the roles, categories, channels and permissions below. Previews by default.
-- **`/setup migrate`:** gives existing members Recruit and maps old roles to the new ones. Previews by default.
+- **`/setup migrate`:** moves existing members to the new roles. Previews by default. Everyone gets **Recruit** and
+  **Football Club**; the server owner (or the member you pick with `captain`) also becomes **MRFC Captain** and
+  **MRFC Squad**. Nobody else gets Captain or Squad. Options: `give_football_club_to_all`, `remove_old_role`, and
+  `announce`, which posts a relaunch announcement with a roll call and one combined football welcome in `#reception`
+  (off by default, so you can migrate quietly first).
 - **`/setup status`:** shows what is configured and what needs fixing.
 - **`/squad add | remove | list`:** MRFC Captains manage the Squad role without needing Manage Roles.
 - **`/announce`:** staff post an announcement embed, optionally pinging a role.
@@ -54,7 +58,7 @@ Squad members also hold Football Club (`/squad add` grants both), so they keep a
    and keep Admin and Mod above it.
 4. Set the environment variables below on your host and start it with `python main.py`.
 5. Run `/setup run` (preview), read the list, then run `/setup run dry_run:False`.
-6. Run `/setup migrate` (preview), then again with `dry_run:False`.
+6. Run `/setup migrate` (preview), then again with `dry_run:False`. Add `announce:True` when you're ready to announce.
 7. Write your rules in `#rules`.
 
 If you already have channels named like these, `/setup run` reports when a category already exists and how many extra
