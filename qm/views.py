@@ -4,7 +4,7 @@ from __future__ import annotations
 import discord
 
 from .layout import ROLE_CAPTAIN, ROLE_CLUB, ROLE_EVENTS, ROLE_NEWS, ROLE_SQUAD
-from .messages import game_welcome
+from .messages import game_leave, game_welcome
 from .util import get_role, has_role, slug
 
 # (role name, label, emoji, style)
@@ -35,12 +35,14 @@ async def toggle_role(interaction: discord.Interaction, role_name: str) -> None:
                 ephemeral=True,
             )
         await member.remove_roles(role, reason="Role picker")
-        return await interaction.followup.send(f"Removed **{role.name}**.", ephemeral=True)
+        await interaction.followup.send(f"Removed **{role.name}**.", ephemeral=True)
+        await game_leave(bot, guild, member, role_name)
+        return
 
     await member.add_roles(role, reason="Role picker")
     extra = " The MRFC section is now unlocked." if role_name == ROLE_CLUB else ""
     await interaction.followup.send(f"You now have **{role.name}**.{extra}", ephemeral=True)
-    # The game-specific welcome follows the pick (once per person per game).
+    # The game-specific welcome follows the pick.
     await game_welcome(bot, guild, member, role_name)
 
 

@@ -3,7 +3,8 @@
 Three kinds of message exist today:
   welcome   server-wide, no football words (posted in #reception when someone joins)
   farewell  server-wide (posted in #reception when someone leaves)
-  football  posted in #reception the first time someone picks the Football Club role
+  football        posted in #reception when someone picks the Football Club role
+  football_leave  posted in #reception when someone deselects it
 
 To add a game later: add a MessageKind with its built-in lines, then a GameWelcome that says which role
 triggers it and which channel it posts in.
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import json
 import random
+import time
 from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
@@ -75,6 +77,23 @@ FOOTBALL_LINES = (
 )
 
 
+_FOOTBALL_EMOJI = ("⚽", "🏟️", "🧤", "🥅", "🏆", "👟")
+FOOTBALL_LINES = tuple(f"{_FOOTBALL_EMOJI[i % len(_FOOTBALL_EMOJI)]} {line}" for i, line in enumerate(FOOTBALL_LINES))
+
+FOOTBALL_LEAVE_LINES = (
+    "👟 {name} has hung up their boots at MRFC. Thanks for the games!",
+    "🚪 {name} left the football club. The dressing room door stays open.",
+    "🔄 Substitution: {name} is off. Thanks for everything on the pitch!",
+    "📋 {name} has left MRFC and headed for the transfer list.",
+    "⏱️ Full time for {name} at MRFC. Come back for the next season!",
+    "🧥 {name} left the training ground. We'll keep your shirt warm.",
+    "🟥 Red card? No, {name} just left on their own. See you around!",
+    "🪑 {name} is on the bench of life now. Thanks for playing with MRFC!",
+    "🤝 {name} has stepped away from MRFC. Good luck out there!",
+    "📣 The gaffer says thanks for the effort, {name}. The door's open.",
+)
+
+
 @dataclass(frozen=True)
 class MessageKind:
     key: str
@@ -86,19 +105,28 @@ KINDS: dict[str, MessageKind] = {
     "welcome": MessageKind("welcome", "Welcome (server-wide)", WELCOME_LINES),
     "farewell": MessageKind("farewell", "Send-off (server-wide)", FAREWELL_LINES),
     "football": MessageKind("football", "Football welcome (after picking Football Club)", FOOTBALL_LINES),
+    "football_leave": MessageKind("football_leave", "Football send-off (after deselecting Football Club)", FOOTBALL_LEAVE_LINES),
 }
 
 
 @dataclass(frozen=True)
 class GameWelcome:
-    kind: str          # key in KINDS
+    kind: str          # key in KINDS, used when the role is picked
+    leave_kind: str    # key in KINDS, used when the role is deselected
     channel_key: str   # settings key of the channel to post in
     title: str
+    leave_title: str
+    colour: int
+    leave_colour: int
 
 
 # Role picked -> the welcome that follows. Add future games here.
 GAME_WELCOMES: dict[str, GameWelcome] = {
-    ROLE_CLUB: GameWelcome("football", "reception", "New signing!"),
+    ROLE_CLUB: GameWelcome(
+        "football", "football_leave", "reception",
+        "⚽ New signing!", "🟥 Hanging up the boots",
+        0x2ECC71, 0xE74C3C,
+    ),
 }
 
 
@@ -173,23 +201,52 @@ async def send_embed(channel: discord.abc.Messageable, embed: discord.Embed, gif
         await channel.send(link_only, allowed_mentions=discord.AllowedMentions.none())
 
 
-async def game_welcome(bot, guild: discord.Guild, member: discord.Member, role_name: str) -> None:
-    """The follow-up welcome after someone picks a game role. Sent once per person per game."""
-    welcome = GAME_WELCOMES.get(role_name)
-    if welcome is None:
+GAME_MESSAGE_COOLDOWN = 300  # seconds; stops message spam when someone toggles a role back and forth
+
+
+def cooldown_ok(bot, guild_id: int, role_name: str, user_id: int, now: float) -> bool:
+    """True if this person may trigger a game message now. Records the time when it returns True."""
+    key = f"gamemsg:{slug(role_name)}:{user_id}"
+    last = bot.settings.get(guild_id, key)
+    try:
+        if last is not None and now - float(last) < GAME_MESSAGE_COOLDOWN:
+            return False
+    except ValueError:
+        pass
+    bot.settings.set(guild_id, key, repr(now))
+    return True
+
+
+async def _game_message(bot, guild: discord.Guild, member: discord.Member, role_name: str, *, joining: bool) -> None:
+    game = GAME_WELCOMES.get(role_name)
+    if game is None:
         return
-    channel = get_channel(bot, guild, welcome.channel_key)
+    channel = get_channel(bot, guild, game.channel_key)
     if channel is None:
         return
-    marker = f"welcomed:{slug(role_name)}:{member.id}"
-    if bot.settings.get(guild.id, marker):
+    if not cooldown_ok(bot, guild.id, role_name, member.id, time.time()):
         return
-    bot.settings.set(guild.id, marker, "1")
-    line = render(pick_line(bot, guild.id, welcome.kind), values_for(bot, guild, member))
-    embed = discord.Embed(title=welcome.title, description=line, colour=discord.Colour.gold())
-    embed.set_thumbnail(url=member.display_avatar.url)
+    kind = game.kind if joining else game.leave_kind
+    line = render(pick_line(bot, guild.id, kind), values_for(bot, guild, member))
+    embed = discord.Embed(
+        title=game.title if joining else game.leave_title,
+        description=line,
+        colour=discord.Colour(game.colour if joining else game.leave_colour),
+    )
+    if joining:
+        embed.set_thumbnail(url=member.display_avatar.url)
+    mentions = discord.AllowedMentions(users=[member]) if joining else discord.AllowedMentions.none()
     try:
-        await send_embed(channel, embed, pick_gif(bot, guild.id, welcome.kind),
-                         discord.AllowedMentions(users=[member]))
+        await send_embed(channel, embed, pick_gif(bot, guild.id, kind), mentions)
     except discord.HTTPException:
         pass
+
+
+async def game_welcome(bot, guild: discord.Guild, member: discord.Member, role_name: str) -> None:
+    """Posted in the game's channel after someone picks a game role."""
+    await _game_message(bot, guild, member, role_name, joining=True)
+
+
+async def game_leave(bot, guild: discord.Guild, member: discord.Member, role_name: str) -> None:
+    """Posted in the game's channel after someone deselects a game role."""
+    await _game_message(bot, guild, member, role_name, joining=False)

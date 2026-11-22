@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from qm.db import Settings  # noqa: E402
 from qm.layout import ROLE_CLUB  # noqa: E402
 from qm.messages import (  # noqa: E402
-    GAME_WELCOMES, KINDS, MAX_LINE_LENGTH, get_items, is_direct_image, pick_gif, pick_line, render, save_items,
+    GAME_MESSAGE_COOLDOWN, GAME_WELCOMES, KINDS, MAX_LINE_LENGTH, cooldown_ok, get_items, is_direct_image, pick_gif, pick_line, render, save_items,
     valid_gif_url,
 )
 
@@ -37,6 +37,11 @@ def test_football_pool_is_football_and_mentions_the_user():
         assert "{user}" in line, line
 
 
+def test_football_leave_lines_use_the_name_not_a_mention():
+    for line in KINDS["football_leave"].builtin:
+        assert "{name}" in line and "{user}" not in line, line
+
+
 def test_no_line_mentions_a_hidden_channel():
     # Welcomes are public; channel mentions would show as unknown to people who can't see that channel.
     for kind in KINDS.values():
@@ -47,6 +52,7 @@ def test_no_line_mentions_a_hidden_channel():
 def test_all_welcomes_post_in_reception():
     for welcome in GAME_WELCOMES.values():
         assert welcome.channel_key == "reception"
+        assert welcome.leave_kind in KINDS
 
 
 def test_all_lines_are_sane():
@@ -74,6 +80,15 @@ def test_render_placeholders():
     values = {"user": "<@1>", "name": "Sam", "server": "Millennial Regiment Gaming", "count": "24"}
     text = render("Hi {user} / {name} to {server} #{count} {unknown}", values)
     assert text == "Hi <@1> / Sam to Millennial Regiment Gaming #24 {unknown}"
+
+
+def test_cooldown_stops_toggle_spam_but_not_later_picks():
+    bot = make_bot()
+    assert cooldown_ok(bot, 1, ROLE_CLUB, 7, 1000.0)
+    assert not cooldown_ok(bot, 1, ROLE_CLUB, 7, 1000.0 + GAME_MESSAGE_COOLDOWN - 1)
+    assert cooldown_ok(bot, 1, ROLE_CLUB, 7, 1000.0 + GAME_MESSAGE_COOLDOWN + 1)
+    assert cooldown_ok(bot, 1, ROLE_CLUB, 8, 1000.0)   # another person is unaffected
+    assert cooldown_ok(bot, 2, ROLE_CLUB, 7, 1000.0)   # another server is unaffected
 
 
 def test_gif_url_rules():
