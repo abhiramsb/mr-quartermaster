@@ -1,0 +1,361 @@
+"""Stream alerts: link parsing, Twitch and YouTube clients, and the pure "who just went live" logic.
+
+Everything here is testable without Discord or the network, except the two small API clients, which take
+an aiohttp-style session so tests can hand them a fake one.
+"""
+from __future__ import annotations
+
+import json
+import re
+import time
+from dataclasses import dataclass
+from typing import Iterable, Optional
+
+import discord
+
+TWITCH = "twitch"
+YOUTUBE = "youtube"
+PLATFORM_LABEL = {TWITCH: "Twitch", YOUTUBE: "YouTube"}
+PLATFORM_COLOR = {TWITCH: 0x9146FF, YOUTUBE: 0xFF0000}
+
+END_AFTER_MISSES = 2          # polls in a row that must say "offline" before we call a stream ended
+RESUME_WINDOW = 20 * 60       # seconds; a stream that comes back within this window reuses its old post
+ENDED_COLOR = 0x7F8C8D
+
+
+class StreamAPIError(Exception):
+    def __init__(self, message: str, status: int = 0):
+        super().__init__(message)
+        self.status = status
+
+
+@dataclass(frozen=True)
+class LiveStream:
+    platform: str
+    channel_id: str       # twitch login (lowercase) or YouTube channel ID
+    stream_id: str
+    title: str
+    game: str
+    url: str
+    thumbnail: str
+    name: str             # the streamer's channel name as the platform shows it
+
+    @property
+    def key(self) -> str:
+        return link_key(self.platform, self.channel_id)
+
+
+def link_key(platform: str, channel_id: str) -> str:
+    return f"{platform}:{channel_id}"
+
+
+# ---- reading what a member typed ---------------------------------------------------------------------------
+
+_TWITCH_URL = re.compile(r"^(?:https?://)?(?:www\.|m\.)?twitch\.tv/([A-Za-z0-9_]+)/?(?:[?#].*)?$", re.I)
+_TWITCH_LOGIN = re.compile(r"^[a-z0-9_]{3,25}$")
+_YT_ID = re.compile(r"^UC[0-9A-Za-z_-]{22}$")
+_YT_URL = re.compile(
+    r"^(?:https?://)?(?:www\.|m\.)?youtube\.com/(@[\w.\-]{3,30}|channel/UC[0-9A-Za-z_-]{22})/?(?:[/?#].*)?$", re.I
+)
+_YT_HANDLE = re.compile(r"^@?[\w.\-]{3,30}$")
+
+
+def parse_twitch(text: str) -> Optional[str]:
+    """A Twitch login from a name, @name or twitch.tv link; None if it can't be one."""
+    t = text.strip()
+    m = _TWITCH_URL.match(t)
+    if m:
+        t = m.group(1)
+    t = t.lstrip("@").lower()
+    return t if _TWITCH_LOGIN.match(t) else None
+
+
+def parse_youtube(text: str) -> Optional[tuple[str, str]]:
+    """("id", "UC...") or ("handle", "@name") from a handle, channel ID or youtube.com link; else None.
+
+    Old-style /c/ and /user/ links aren't supported, because the API can't resolve them reliably.
+    """
+    t = text.strip()
+    m = _YT_URL.match(t)
+    if m:
+        t = m.group(1)
+        if t.lower().startswith("channel/"):
+            t = t[len("channel/"):]
+    if _YT_ID.match(t):
+        return ("id", t)
+    if _YT_HANDLE.match(t):
+        return ("handle", t if t.startswith("@") else "@" + t)
+    return None
+
+
+# ---- the stored links and state ----------------------------------------------------------------------------
+
+def load_links(settings, guild_id: int) -> list[dict]:
+    try:
+        data = json.loads(settings.get(guild_id, "streams:links", "[]") or "[]")
+    except ValueError:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def save_links(settings, guild_id: int, links: list[dict]) -> None:
+    settings.set(guild_id, "streams:links", json.dumps(links))
+
+
+def load_state(settings, guild_id: int) -> dict:
+    try:
+        data = json.loads(settings.get(guild_id, "streams:state", "{}") or "{}")
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_state(settings, guild_id: int, state: dict) -> None:
+    settings.set(guild_id, "streams:state", json.dumps(state))
+
+
+def add_link(links: list[dict], user_id: int, platform: str, channel_id: str, name: str, game: str) -> tuple[list[dict], Optional[int]]:
+    """Add or replace the member's link for this platform.
+
+    Returns (new links, other_user_id). other_user_id is set, and nothing is added, when someone else
+    already linked that same channel.
+    """
+    for link in links:
+        if link["platform"] == platform and link["channel_id"] == channel_id and link["user_id"] != user_id:
+            return links, link["user_id"]
+    kept = [l for l in links if not (l["user_id"] == user_id and l["platform"] == platform)]
+    kept.append({"user_id": user_id, "platform": platform, "channel_id": channel_id, "name": name, "game": game})
+    return kept, None
+
+
+def remove_link(links: list[dict], user_id: int, platform: str) -> tuple[list[dict], bool]:
+    kept = [l for l in links if not (l["user_id"] == user_id and l["platform"] == platform)]
+    return kept, len(kept) != len(links)
+
+
+# ---- who just went live ------------------------------------------------------------------------------------
+
+def diff_live(
+    state: dict, live_now: dict[str, LiveStream], polled: set[str], now: float
+) -> tuple[dict, list[tuple[str, str]]]:
+    """Work out what to do after a poll.
+
+    state:    key -> {"live", "stream_id", "message_id", "ended_at", "misses"} from earlier polls
+    live_now: key -> LiveStream for everything the poll saw live
+    polled:   keys whose platform answered this time. A key that wasn't polled (API down) is left alone, so
+              an outage never ends a stream or re-announces one.
+    Returns (new_state, actions). Actions are ("announce"|"resume"|"end", key). The caller posts the message
+    and then stores message_id on new_state[key].
+    """
+    new = {k: dict(v) for k, v in state.items()}
+    actions: list[tuple[str, str]] = []
+
+    for key, stream in live_now.items():
+        entry = new.get(key)
+        if entry is not None and entry.get("live"):
+            entry["misses"] = 0
+            if entry.get("stream_id") != stream.stream_id:
+                new[key] = {"live": True, "stream_id": stream.stream_id, "message_id": None, "ended_at": None, "misses": 0}
+                actions.append(("announce", key))
+            continue
+        ended_at = entry.get("ended_at") if entry else None
+        if entry is not None and ended_at is not None and now - ended_at <= RESUME_WINDOW and entry.get("message_id"):
+            entry.update({"live": True, "stream_id": stream.stream_id, "ended_at": None, "misses": 0})
+            actions.append(("resume", key))
+        else:
+            new[key] = {"live": True, "stream_id": stream.stream_id, "message_id": None, "ended_at": None, "misses": 0}
+            actions.append(("announce", key))
+
+    for key, entry in new.items():
+        if key in live_now or not entry.get("live") or key not in polled:
+            continue
+        entry["misses"] = entry.get("misses", 0) + 1
+        if entry["misses"] >= END_AFTER_MISSES:
+            entry.update({"live": False, "ended_at": now, "misses": 0})
+            actions.append(("end", key))
+
+    # forget old finished entries so the stored state doesn't grow forever
+    stale = [
+        k for k, v in new.items()
+        if not v.get("live") and v.get("ended_at") is not None and now - v["ended_at"] > RESUME_WINDOW * 6
+    ]
+    for key in stale:
+        del new[key]
+    return new, actions
+
+
+# ---- embeds ------------------------------------------------------------------------------------------------
+
+def live_embed(stream: LiveStream, display_name: str, avatar_url: Optional[str] = None) -> discord.Embed:
+    label = PLATFORM_LABEL[stream.platform]
+    embed = discord.Embed(
+        title=(stream.title or "Live now")[:256],
+        url=stream.url,
+        description=f"**{display_name}** is live on {label}. Come hang out!",
+        colour=discord.Colour(PLATFORM_COLOR[stream.platform]),
+    )
+    if stream.game:
+        embed.add_field(name="Playing", value=stream.game[:1000], inline=True)
+    embed.add_field(name="Watch", value=f"[{stream.name}]({stream.url})", inline=True)
+    if stream.thumbnail:
+        embed.set_image(url=stream.thumbnail)
+    embed.set_author(name=f"{display_name} · LIVE", icon_url=avatar_url)
+    embed.set_footer(text=label)
+    return embed
+
+
+def ended_embed(old: discord.Embed) -> discord.Embed:
+    """The same post, greyed out, once the stream is over."""
+    embed = old.copy()
+    embed.colour = discord.Colour(ENDED_COLOR)
+    embed.description = "This stream has ended. Catch the next one!"
+    embed.set_image(url=None)
+    if embed.author and embed.author.name:
+        embed.set_author(name=embed.author.name.replace("· LIVE", "· ended"), icon_url=embed.author.icon_url)
+    return embed
+
+
+# ---- API clients -------------------------------------------------------------------------------------------
+
+def _chunks(items: list, size: int) -> Iterable[list]:
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
+
+
+def parse_twitch_stream(item: dict, fallback_game: str = "") -> Optional[LiveStream]:
+    if item.get("type") not in (None, "live"):
+        return None
+    login = str(item.get("user_login", "")).lower()
+    if not login or not item.get("id"):
+        return None
+    thumb = str(item.get("thumbnail_url", "")).replace("{width}", "1280").replace("{height}", "720")
+    if thumb:
+        thumb += f"?t={int(time.time() // 60)}"  # Twitch caches thumbnails; a new value per minute refreshes it
+    return LiveStream(
+        platform=TWITCH, channel_id=login, stream_id=str(item["id"]), title=item.get("title", ""),
+        game=item.get("game_name") or fallback_game, url=f"https://www.twitch.tv/{login}",
+        thumbnail=thumb, name=item.get("user_name") or login,
+    )
+
+
+def parse_youtube_video(item: dict) -> Optional[LiveStream]:
+    snippet = item.get("snippet", {})
+    details = item.get("liveStreamingDetails", {})
+    if snippet.get("liveBroadcastContent") != "live" or details.get("actualEndTime"):
+        return None
+    thumbs = snippet.get("thumbnails", {})
+    thumb = (thumbs.get("maxres") or thumbs.get("high") or thumbs.get("medium") or {}).get("url", "")
+    return LiveStream(
+        platform=YOUTUBE, channel_id=snippet.get("channelId", ""), stream_id=str(item.get("id", "")),
+        title=snippet.get("title", ""), game="", url=f"https://www.youtube.com/watch?v={item.get('id', '')}",
+        thumbnail=thumb, name=snippet.get("channelTitle", ""),
+    )
+
+
+class TwitchClient:
+    """Twitch Helix with an app token (client credentials). Needs a free app at dev.twitch.tv."""
+
+    def __init__(self, session, client_id: str, client_secret: str):
+        self.session = session
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self._token = ""
+        self._expires = 0.0
+
+    async def _ensure_token(self, force: bool = False) -> str:
+        if self._token and not force and time.time() < self._expires - 60:
+            return self._token
+        async with self.session.post(
+            "https://id.twitch.tv/oauth2/token",
+            data={"client_id": self.client_id, "client_secret": self.client_secret, "grant_type": "client_credentials"},
+        ) as resp:
+            if resp.status != 200:
+                raise StreamAPIError(f"Twitch refused the app credentials ({resp.status})", resp.status)
+            body = await resp.json()
+        self._token = body["access_token"]
+        self._expires = time.time() + float(body.get("expires_in", 3600))
+        return self._token
+
+    async def _get(self, path: str, params: list[tuple[str, str]]) -> dict:
+        for attempt in (0, 1):
+            token = await self._ensure_token(force=attempt == 1)
+            headers = {"Client-Id": self.client_id, "Authorization": f"Bearer {token}"}
+            async with self.session.get(f"https://api.twitch.tv/helix/{path}", params=params, headers=headers) as resp:
+                if resp.status == 401 and attempt == 0:
+                    continue  # token expired early; fetch a new one and retry once
+                if resp.status != 200:
+                    raise StreamAPIError(f"Twitch answered {resp.status}", resp.status)
+                return await resp.json()
+        raise StreamAPIError("Twitch kept refusing the token", 401)
+
+    async def get_users(self, logins: list[str]) -> dict[str, dict]:
+        found: dict[str, dict] = {}
+        for batch in _chunks(logins, 100):
+            body = await self._get("users", [("login", l) for l in batch])
+            for u in body.get("data", []):
+                found[u["login"].lower()] = u
+        return found
+
+    async def get_streams(self, logins: list[str], games: Optional[dict[str, str]] = None) -> list[LiveStream]:
+        games = games or {}
+        out: list[LiveStream] = []
+        for batch in _chunks(logins, 100):
+            body = await self._get("streams", [("user_login", l) for l in batch] + [("first", "100")])
+            for item in body.get("data", []):
+                stream = parse_twitch_stream(item, games.get(str(item.get("user_login", "")).lower(), ""))
+                if stream:
+                    out.append(stream)
+        return out
+
+
+class YouTubeClient:
+    """YouTube Data API v3 with an API key. Checks each channel's newest uploads, which costs about 2 quota
+    units per channel per check (the live-search call would cost 100)."""
+
+    def __init__(self, session, api_key: str):
+        self.session = session
+        self.api_key = api_key
+
+    async def _get(self, path: str, params: dict) -> dict:
+        async with self.session.get(
+            f"https://www.googleapis.com/youtube/v3/{path}", params={**params, "key": self.api_key}
+        ) as resp:
+            if resp.status != 200:
+                raise StreamAPIError(f"YouTube answered {resp.status}", resp.status)
+            return await resp.json()
+
+    async def resolve(self, ref: tuple[str, str]) -> Optional[dict]:
+        """{"channel_id", "name"} for ("id", ...) or ("handle", ...); None if it doesn't exist."""
+        kind, value = ref
+        params = {"part": "snippet", ("id" if kind == "id" else "forHandle"): value}
+        body = await self._get("channels", params)
+        items = body.get("items") or []
+        if not items:
+            return None
+        return {"channel_id": items[0]["id"], "name": items[0].get("snippet", {}).get("title", value)}
+
+    async def live_now(self, channel_ids: list[str]) -> list[LiveStream]:
+        video_ids: list[str] = []
+        for cid in channel_ids:
+            if not _YT_ID.match(cid):
+                continue
+            try:
+                body = await self._get(
+                    "playlistItems", {"part": "contentDetails", "playlistId": "UU" + cid[2:], "maxResults": 5}
+                )
+            except StreamAPIError as exc:
+                if exc.status == 404:   # deleted channel or hidden uploads; skip it instead of failing everyone
+                    continue
+                raise
+            video_ids += [i["contentDetails"]["videoId"] for i in body.get("items", []) if "contentDetails" in i]
+        wanted = set(channel_ids)
+        seen: set[str] = set()
+        out: list[LiveStream] = []
+        for batch in _chunks(video_ids, 50):
+            body = await self._get("videos", {"part": "snippet,liveStreamingDetails", "id": ",".join(batch)})
+            for item in body.get("items", []):
+                stream = parse_youtube_video(item)
+                if stream and stream.channel_id in wanted and stream.channel_id not in seen:
+                    seen.add(stream.channel_id)
+                    out.append(stream)
+        return out

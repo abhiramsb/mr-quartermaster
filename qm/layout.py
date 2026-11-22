@@ -19,6 +19,7 @@ ROLE_CLUB = "Football Club"
 ROLE_RECRUIT = "Recruit"
 ROLE_EVENTS = "Event Pings"
 ROLE_NEWS = "News Pings"
+ROLE_STREAMS = "Stream Pings"
 
 # Access levels used in the layout below.
 RW = "rw"      # see, read history, post (voice: connect and speak)
@@ -47,6 +48,7 @@ ROLE_SPECS: tuple[RoleSpec, ...] = (
     RoleSpec(ROLE_RECRUIT, 0x95A5A6),
     RoleSpec(ROLE_EVENTS, 0x9B59B6, mentionable=True),
     RoleSpec(ROLE_NEWS, 0x1ABC9C, mentionable=True),
+    RoleSpec(ROLE_STREAMS, 0xE91E63, mentionable=True),
 )
 
 

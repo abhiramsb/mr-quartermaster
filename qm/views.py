@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import discord
 
-from .layout import ROLE_CAPTAIN, ROLE_CLUB, ROLE_EVENTS, ROLE_NEWS, ROLE_SQUAD
+from .layout import ROLE_CAPTAIN, ROLE_CLUB, ROLE_EVENTS, ROLE_NEWS, ROLE_SQUAD, ROLE_STREAMS
 from .messages import game_leave, game_welcome
 from .util import get_role, has_role, slug
 
@@ -12,6 +12,7 @@ PICKER_ROLES = (
     (ROLE_CLUB, "Football Club", "⚽", discord.ButtonStyle.primary),
     (ROLE_EVENTS, "Event Pings", "📣", discord.ButtonStyle.secondary),
     (ROLE_NEWS, "News Pings", "📰", discord.ButtonStyle.secondary),
+    (ROLE_STREAMS, "Stream Pings", "🔴", discord.ButtonStyle.secondary),
 )
 
 

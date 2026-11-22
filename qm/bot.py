@@ -19,6 +19,7 @@ EXTENSIONS = (
     "qm.cogs.squad",
     "qm.cogs.announce",
     "qm.cogs.logs",
+    "qm.cogs.streams",
 )
 
 
