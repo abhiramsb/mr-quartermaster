@@ -97,7 +97,7 @@ def test_channel_keys_and_names_unique_and_valid():
 def test_everyone_new_arrival_sees_only_reception():
     for cat, ch in _channels():
         visible = can_view([], cat, ch)
-        assert visible == (cat.name == "START HERE"), (cat.name, ch.name)
+        assert visible == (cat.name == "HQ"), (cat.name, ch.name)
     for key in ("reception", "rules", "announcements", "pick_roles"):
         cat, ch = find(key)
         assert not can_post([], cat, ch), key

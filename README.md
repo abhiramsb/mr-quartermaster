@@ -39,7 +39,7 @@ them above this bot's role. The bot places the roles below its own and cannot gr
 ## Channels
 | Category | Channels | Who |
 |---|---|---|
-| START HERE | `#reception`, `#rules`, `#announcements`, `#pick-your-roles` | everyone reads; staff post in announcements |
+| HQ | `#reception`, `#rules`, `#announcements`, `#pick-your-roles` | everyone reads; staff post in announcements |
 | GENERAL | `#general`, `#media`, `#looking-for-group`, `#off-topic`, voice: General Lounge, Lounge 2 | Recruit and up |
 | MRFC *(hidden until Football Club)* | `#mrfc-announcements`, `#mrfc-chat`, `#mrfc-sessions`, voice: MRFC Lobby | Football Club and up (Captains post in announcements and sessions) |
 | | `#mrfc-tactics` | Squad and Captains |

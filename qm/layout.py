@@ -71,7 +71,7 @@ _STAFF = {ROLE_ADMIN: RW, ROLE_MOD: RW}
 
 LAYOUT: tuple[CategorySpec, ...] = (
     CategorySpec(
-        "START HERE",
+        "HQ",
         {EVERYONE: R, **_STAFF},
         (
             ChannelSpec("reception", "reception", topic="Who just joined and who just left."),
