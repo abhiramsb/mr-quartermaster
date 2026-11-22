@@ -121,6 +121,8 @@ def test_football_club_member_access():
         cat, ch = find(key)
         assert can_view(club, cat, ch), key
     assert can_post(club, *find("mrfc_chat"))
+    assert can_post(club, *find("mrfc_streams_clips"))
+    assert not can_view([ROLE_RECRUIT], *find("mrfc_streams_clips"))
     assert can_post(club, *find("mrfc_lobby"))
     assert not can_post(club, *find("mrfc_announcements"))
     assert not can_post(club, *find("mrfc_sessions"))

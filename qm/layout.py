@@ -88,6 +88,8 @@ LAYOUT: tuple[CategorySpec, ...] = (
                         access={ROLE_CAPTAIN: RW}),
             ChannelSpec("mrfc_chat", "mrfc-chat", topic="Football chat.",
                         access={ROLE_CLUB: RW, ROLE_SQUAD: RW, ROLE_CAPTAIN: RW}),
+            ChannelSpec("mrfc_streams_clips", "mrfc-streams-n-clips", topic="Streams, goals and funny moments.",
+                        access={ROLE_CLUB: RW, ROLE_SQUAD: RW, ROLE_CAPTAIN: RW}),
             ChannelSpec("mrfc_sessions", "mrfc-sessions", topic="Session RSVPs from MRFC_GroundsKeeper.",
                         access={ROLE_CAPTAIN: RW}, bot_env="GROUNDSKEEPER_BOT_ID"),
             ChannelSpec("mrfc_tactics", "mrfc-tactics", topic="Squad tactics and the coach's daily debrief.",
