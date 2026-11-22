@@ -62,6 +62,20 @@ FAREWELL_LINES = (
     "Farewell, {name}. May your ping be low and your loot be high.",
 )
 
+GREET_LINES = (
+    "{user} is rolling out the welcome mat for {new}. Nicely done, Regiment!",
+    "Welcome party update: {user} just saluted {new}. 🎖️",
+    "{user} spotted the new recruit {new} and said hello. That's how it's done!",
+    "Good manners detected! {user} welcomed {new} to {server}.",
+    "{user} is on welcome duty today. {new}, you're in good hands!",
+    "{user} to {new}: welcome aboard! The rest of you, don't leave them hanging.",
+    "Morale +1! {user} welcomed {new} to the ranks.",
+    "{new} has been greeted by {user}. The Regiment approves.",
+    "{user} just handed {new} a warm welcome and a metaphorical snack. 🍪",
+    "Friendly fire? No, friendly welcome! {user} greeted {new}.",
+    "{user} says hi to {new}. Team spirit: unlocked. 🔓",
+)
+
 FOOTBALL_LINES = (
     "{user} has joined the football club! Matches are scheduled in the MRFC section.",
     "New signing! {user} is officially on the team sheet. Welcome to MRFC.",
@@ -105,6 +119,7 @@ class MessageKind:
 KINDS: dict[str, MessageKind] = {
     "welcome": MessageKind("welcome", "Welcome (server-wide)", WELCOME_LINES),
     "farewell": MessageKind("farewell", "Send-off (server-wide)", FAREWELL_LINES),
+    "greet": MessageKind("greet", "Reply when a member welcomes a newcomer in #reception (use {user} for the greeter, {new} for the newcomer)", GREET_LINES),
     "football": MessageKind("football", "Football welcome (after picking Football Club)", FOOTBALL_LINES),
     "football_leave": MessageKind("football_leave", "Football send-off (after deselecting Football Club)", FOOTBALL_LEAVE_LINES),
 }
@@ -169,7 +184,7 @@ def gif_items(bot, guild_id: int, kind: str) -> list[str]:
     if not bot.settings.get(guild_id, marker):
         bot.settings.set(guild_id, marker, "1")
         if not get_items(bot, guild_id, "gifs", kind):
-            save_items(bot, guild_id, "gifs", kind, list(SEED_GIFS.get(kind, [])))
+            save_items(bot, guild_id, "gifs", kind, list(SEED_GIFS.get("welcome" if kind == "greet" else kind, [])))  # greet reuses the welcome GIFs
     return get_items(bot, guild_id, "gifs", kind)
 
 
