@@ -3,7 +3,7 @@
 Three kinds of message exist today:
   welcome   server-wide, no football words (posted in #reception when someone joins)
   farewell  server-wide (posted in #reception when someone leaves)
-  football  posted in #mrfc-chat the first time someone picks the Football Club role
+  football  posted in #reception the first time someone picks the Football Club role
 
 To add a game later: add a MessageKind with its built-in lines, then a GameWelcome that says which role
 triggers it and which channel it posts in.
@@ -60,15 +60,15 @@ FAREWELL_LINES = (
 )
 
 FOOTBALL_LINES = (
-    "{user} has joined the football club! Check {sessions} for the next match.",
+    "{user} has joined the football club! Matches are scheduled in the MRFC section.",
     "New signing! {user} is officially on the team sheet. Welcome to MRFC.",
     "{user} has arrived at the training ground. Boots on, shin pads optional.",
     "The transfer window is open and {user} just walked in. Welcome to MRFC!",
-    "{user} wants a game. Fixtures live in {sessions}, so grab a position.",
+    "{user} wants a game. Grab a position and get on the team sheet.",
     "Welcome to MRFC, {user}! First rule of match day: call for the ball.",
     "{user} has signed on the dotted line. Say hello in the chat!",
     "A new face in the dressing room: {user}. Welcome to MRFC.",
-    "{user}, welcome to MRFC. Your debut could be in {sessions}.",
+    "{user}, welcome to MRFC. Your debut could be this week.",
     "Fresh legs! {user} joins MRFC. The gaffer approves.",
     "Match day just got better: {user} is now part of MRFC.",
     "{user} has been spotted in the tunnel. Welcome to the club!",
@@ -98,7 +98,7 @@ class GameWelcome:
 
 # Role picked -> the welcome that follows. Add future games here.
 GAME_WELCOMES: dict[str, GameWelcome] = {
-    ROLE_CLUB: GameWelcome("football", "mrfc_chat", "New signing!"),
+    ROLE_CLUB: GameWelcome("football", "reception", "New signing!"),
 }
 
 

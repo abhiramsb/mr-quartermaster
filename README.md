@@ -7,7 +7,8 @@ members, hands out roles, and lets MRFC Captains manage the squad. The football-
 ## What it does
 - **#reception:** a random welcome when someone joins, a random send-off when they leave, and the **Recruit** role on join.
   The server-wide lines contain no football words. Each message can include a random GIF from a list you curate.
-- **Game welcome:** the first time someone picks **Football Club**, a football-themed welcome posts in `#mrfc-chat`.
+- **Game welcome:** the first time someone picks **Football Club**, a football-themed welcome posts in `#reception`.
+  All welcomes and send-offs go to `#reception`; nothing is posted in the chat channels.
   Other games can get their own later (see `qm/messages.py`).
 - **Role-picker** in `#pick-your-roles`: persistent buttons for **Football Club** (unlocks the MRFC section),
   **Event Pings** and **News Pings**.

@@ -37,6 +37,18 @@ def test_football_pool_is_football_and_mentions_the_user():
         assert "{user}" in line, line
 
 
+def test_no_line_mentions_a_hidden_channel():
+    # Welcomes are public; channel mentions would show as unknown to people who can't see that channel.
+    for kind in KINDS.values():
+        for line in kind.builtin:
+            assert "{sessions}" not in line and "{picker}" not in line, line
+
+
+def test_all_welcomes_post_in_reception():
+    for welcome in GAME_WELCOMES.values():
+        assert welcome.channel_key == "reception"
+
+
 def test_all_lines_are_sane():
     for kind in KINDS.values():
         assert len(kind.builtin) >= 10, kind.key
