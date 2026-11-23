@@ -32,6 +32,7 @@ members, hands out roles, and lets MRFC Captains manage the squad. The football-
   posts an embed (title, game, thumbnail, watch link) in `#streams-n-clips`, pinging **Stream Pings**. Members who show a
   Twitch or YouTube "Streaming" status on Discord are announced instantly even without linking. The post is greyed
   out when the stream ends, and a stream that drops and returns within 20 minutes reuses its post instead of pinging again.
+  Members with a linked YouTube channel also get an alert (no ping) when they upload a new video; Shorts are skipped.
   See *Stream alerts* below.
 - **`#bot-logs`:** joins, leaves, role changes and bans.
 
@@ -98,6 +99,17 @@ so when someone tries to link.
   at each linked channel's newest uploads (about 2 quota units per channel per check, so roughly 10 linked channels fit in
   the free 10,000 units a day). Members can add a `game` when linking, since YouTube doesn't expose one reliably.
   Use an `@handle`, a `youtube.com/@handle` or `youtube.com/channel/UC...` link, or the channel ID.
+
+**YouTube upload alerts.** With a linked YouTube channel and `YOUTUBE_API_KEY` set, a new ordinary video is posted in
+`#streams-n-clips` as a "NEW VIDEO" embed with its thumbnail and link. It doesn't ping **Stream Pings**. It uses the same
+check as go-live alerts, so it adds no API quota. Details:
+- The first check of a channel (when it's linked, or after this feature is first deployed) only records its existing
+  videos, so old uploads are never posted.
+- A video published more than 48 hours before the bot sees it is not posted, and at most 3 go out per channel per check.
+- **Shorts are skipped.** YouTube's API has no Shorts flag, so a video over 3 minutes is treated as ordinary, and a shorter
+  one is checked against YouTube's `/shorts/` page. If that page can't be reached, a video of 60 seconds or less is
+  treated as a Short. A short ordinary video can occasionally be missed this way.
+- Finished livestreams, premieres and scheduled streams are not treated as uploads. Alerts arrive within a few minutes.
 
 Things to know:
 - Linking is on trust: the bot checks that the channel exists but can't prove it belongs to the member. Staff can remove any link.

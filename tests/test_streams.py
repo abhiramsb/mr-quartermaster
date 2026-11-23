@@ -12,7 +12,7 @@ from qm.db import Settings  # noqa: E402
 from qm.layout import ROLE_SPECS, ROLE_STREAMS  # noqa: E402
 from qm.streams import (  # noqa: E402
     END_AFTER_MISSES, PRESENCE_ID, presence_stream, youtube_video_id, RESUME_WINDOW, TWITCH, YOUTUBE, LiveStream, StreamAPIError, TwitchClient, YouTubeClient,
-    add_link, diff_live, ended_embed, link_key, live_embed, load_links, load_state, parse_twitch,
+    Upload, add_link, diff_live, diff_uploads, ended_embed, link_key, live_embed, load_links, load_state, parse_twitch,
     parse_twitch_stream, parse_youtube, parse_youtube_video, remove_link, save_links, save_state,
 )
 from qm.views import PICKER_ROLES  # noqa: E402
@@ -499,3 +499,169 @@ def test_presence_listener_reacts_only_to_a_new_stream():
     other = SimpleNamespace(bot=False, guild=guild, activities=[discord.Game("FC 27")])
     run(cog.on_presence_update(before, other))
     assert len(channel.sent) == 1
+
+
+# ---- YouTube upload alerts ---------------------------------------------------------------------------------
+
+import time  # noqa: E402
+
+import aiohttp  # noqa: E402
+
+from qm.streams import (  # noqa: E402
+    SHORTS_MAX_SECONDS, UPLOAD_MAX_AGE, UPLOAD_MAX_PER_POLL, load_upload_state, parse_iso_duration,
+    parse_youtube_upload, upload_embed,
+)
+
+
+def upload(vid="v1", age=60, channel=UC, duration=600, title="New video"):
+    return Upload(channel, vid, title, f"https://www.youtube.com/watch?v={vid}", "http://t", "Ace YT",
+                  time.time() - age, duration)
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("PT1M5S", 65), ("PT45S", 45), ("PT1H", 3600), ("PT1H2M3S", 3723), ("P1DT1H", 90000), ("PT0S", 0),
+    ("", None), ("junk", None), ("P0D", 0),
+])
+def test_parse_iso_duration(text, expected):
+    assert parse_iso_duration(text) == expected
+
+
+def test_parse_youtube_upload_only_takes_ordinary_finished_videos():
+    item = {"id": "v1", "snippet": {"channelId": UC, "title": "t", "channelTitle": "Ace", "liveBroadcastContent": "none",
+                                      "publishedAt": "2026-11-23T10:00:00Z", "thumbnails": {"high": {"url": "http://h"}}},
+            "contentDetails": {"duration": "PT10M"}}
+    up = parse_youtube_upload(item)
+    assert up.video_id == "v1" and up.duration == 600 and up.thumbnail == "http://h" and up.published_at > 0
+    assert up.url == "https://www.youtube.com/watch?v=v1"
+    live = {**item, "snippet": {**item["snippet"], "liveBroadcastContent": "live"}}
+    soon = {**item, "snippet": {**item["snippet"], "liveBroadcastContent": "upcoming"}}
+    past_stream = {**item, "liveStreamingDetails": {"actualEndTime": "2026-11-23T11:00:00Z"}}
+    assert parse_youtube_upload(live) is None and parse_youtube_upload(soon) is None
+    assert parse_youtube_upload(past_stream) is None                 # a finished livestream was already a stream alert
+    assert parse_youtube_upload({**item, "id": ""}) is None
+
+
+def test_diff_uploads_first_sight_records_without_announcing():
+    state, fresh = diff_uploads({}, [upload("a"), upload("b")], {UC}, {UC}, time.time())
+    assert fresh == [] and sorted(state[UC]["seen"]) == ["a", "b"]
+
+
+def test_diff_uploads_announces_each_new_video_once_oldest_first():
+    state, _ = diff_uploads({}, [upload("a", age=900)], {UC}, {UC}, time.time())
+    vids = [upload("a", age=900), upload("c", age=100), upload("b", age=500)]
+    state, fresh = diff_uploads(state, vids, {UC}, {UC}, time.time())
+    assert [u.video_id for u in fresh] == ["b", "c"]
+    state, fresh = diff_uploads(state, vids, {UC}, {UC}, time.time())
+    assert fresh == []                                              # nothing repeats
+
+
+def test_diff_uploads_skips_old_videos_caps_bursts_and_ignores_unpolled_or_unlinked():
+    state, _ = diff_uploads({}, [], {UC}, {UC}, time.time())
+    old = upload("old", age=UPLOAD_MAX_AGE + 60)
+    burst = [upload(f"n{i}", age=1000 - i) for i in range(UPLOAD_MAX_PER_POLL + 2)]
+    state, fresh = diff_uploads(state, [old] + burst, {UC}, {UC}, time.time())
+    assert "old" not in [u.video_id for u in fresh]                 # too old: recorded, not announced
+    assert [u.video_id for u in fresh] == [u.video_id for u in burst][-UPLOAD_MAX_PER_POLL:]
+    assert "old" in state[UC]["seen"]
+    kept, fresh = diff_uploads(state, [upload("x")], set(), {UC}, time.time())   # channel not polled this time
+    assert fresh == [] and kept[UC] == state[UC]
+    dropped, _ = diff_uploads(state, [], {UC}, set(), time.time())               # unlinked: forgotten
+    assert dropped == {}
+
+
+def test_youtube_scan_returns_live_and_uploads_from_the_same_calls():
+    session = FakeSession([
+        ("playlistItems", 200, {"items": [{"contentDetails": {"videoId": "v1"}}, {"contentDetails": {"videoId": "v2"}}]}),
+        ("youtube/v3/videos", 200, {"items": [
+            {"id": "v1", "snippet": {"channelId": UC, "title": "vid", "channelTitle": "Ace", "liveBroadcastContent": "none",
+                                      "publishedAt": "2026-11-23T10:00:00Z"}, "contentDetails": {"duration": "PT5M"}},
+            {"id": "v2", "snippet": {"channelId": UC, "title": "live!", "channelTitle": "Ace", "liveBroadcastContent": "live"},
+             "liveStreamingDetails": {}},
+        ]}),
+    ])
+    live, ups = run(YouTubeClient(session, "KEY").scan([UC]))
+    assert [s.stream_id for s in live] == ["v2"] and [u.video_id for u in ups] == ["v1"]
+    assert len(session.calls) == 2                                  # one playlist call, one videos call
+    assert "contentDetails" in session.calls[1][1]["part"]
+
+
+class FakeHeadSession:
+    def __init__(self, status=None, error=None):
+        self.status, self.error, self.urls = status, error, []
+
+    def head(self, url, allow_redirects=True):
+        self.urls.append((url, allow_redirects))
+        if self.error:
+            raise self.error
+        return FakeResp(self.status, {})
+
+
+def test_is_short_checks_the_shorts_page_only_for_short_videos():
+    long_video = upload(duration=SHORTS_MAX_SECONDS + 1)
+    sess = FakeHeadSession(200)
+    assert run(YouTubeClient(sess, "K").is_short(long_video)) is False and sess.urls == []      # too long: no request
+    assert run(YouTubeClient(FakeHeadSession(200), "K").is_short(upload(duration=30))) is True  # stays on /shorts/
+    sess = FakeHeadSession(303)
+    assert run(YouTubeClient(sess, "K").is_short(upload("abc", duration=120))) is False         # redirected: ordinary
+    assert sess.urls == [("https://www.youtube.com/shorts/abc", False)]
+    assert run(YouTubeClient(FakeHeadSession(None, aiohttp.ClientError()), "K").is_short(upload(duration=45))) is True
+    assert run(YouTubeClient(FakeHeadSession(None, aiohttp.ClientError()), "K").is_short(upload(duration=120))) is False
+    assert run(YouTubeClient(FakeHeadSession(200), "K").is_short(upload(duration=None))) is False
+
+
+def test_upload_embed_wording():
+    e = upload_embed(upload(title="Big win"), "Ace", "http://a")
+    assert e.title == "Big win" and "uploaded a new video" in e.description and "NEW VIDEO" in e.author.name
+
+
+class FakeYouTube:
+    def __init__(self):
+        self.uploads, self.shorts = [], set()
+
+    async def scan(self, channel_ids):
+        return [], [u for u in self.uploads if u.channel_id in channel_ids]
+
+    async def is_short(self, up):
+        return up.video_id in self.shorts
+
+
+def make_youtube_cog():
+    cog, guild, channel = make_cog()
+    save_links(cog.bot.settings, 1, [{"user_id": 42, "platform": YOUTUBE, "channel_id": UC, "name": "Ace YT", "game": ""}])
+    cog.youtube = FakeYouTube()
+    return cog, guild, channel
+
+
+def test_cog_posts_new_uploads_once_without_pinging_and_skips_shorts():
+    cog, guild, channel = make_youtube_cog()
+    cog.youtube.uploads = [upload("old", age=5000)]
+    run(cog._poll_guild(guild))
+    assert channel.sent == []                                       # first check: only records what's already there
+
+    cog.youtube.uploads = [upload("old", age=5000), upload("new1", age=120), upload("short1", age=60, duration=30)]
+    cog.youtube.shorts = {"short1"}
+    run(cog._poll_guild(guild))
+    run(cog._poll_guild(guild))
+    assert len(channel.sent) == 1                                   # the Short is skipped; the video posts once
+    content, mentions = channel.sent[0]
+    assert content is None and not mentions.roles and not mentions.everyone and not mentions.users
+    assert "new1" in channel.messages[1].embeds[0].url
+    assert "short1" in load_upload_state(cog.bot.settings, 1)[UC]["seen"]   # skipped Shorts aren't re-checked
+
+
+def test_cog_upload_alerts_ignore_members_who_left_and_survive_an_outage():
+    cog, guild, channel = make_youtube_cog()
+    run(cog._poll_guild(guild))
+    save_links(cog.bot.settings, 1, [{"user_id": 99, "platform": YOUTUBE, "channel_id": UC, "name": "Ace YT", "game": ""}])
+    cog.youtube.uploads = [upload("new1", age=60)]
+    run(cog._poll_guild(guild))
+    assert channel.sent == []                                       # user 99 isn't in the server
+
+    cog2, guild2, channel2 = make_youtube_cog()
+    run(cog2._poll_guild(guild2))
+
+    async def boom(ids):
+        raise StreamAPIError("quota", 403)
+    cog2.youtube.scan = boom
+    run(cog2._poll_guild(guild2))
+    assert channel2.sent == [] and UC in load_upload_state(cog2.bot.settings, 1)

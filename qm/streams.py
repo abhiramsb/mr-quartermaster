@@ -9,8 +9,10 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Iterable, Optional
 
+import aiohttp
 import discord
 
 TWITCH = "twitch"
@@ -21,6 +23,12 @@ PLATFORM_COLOR = {TWITCH: 0x9146FF, YOUTUBE: 0xFF0000}
 END_AFTER_MISSES = 2          # polls in a row that must say "offline" before we call a stream ended
 RESUME_WINDOW = 20 * 60       # seconds; a stream that comes back within this window reuses its old post
 ENDED_COLOR = 0x7F8C8D
+UPLOAD_MAX_AGE = 48 * 3600    # seconds; an upload older than this is recorded as seen but never announced
+UPLOAD_MAX_PER_POLL = 3       # per channel; a burst of uploads can't flood the channel
+UPLOAD_SEEN_KEEP = 50         # video IDs remembered per channel
+SHORTS_MAX_SECONDS = 180      # YouTube Shorts can be up to 3 minutes; anything longer is never a Short
+SHORTS_SURE_SECONDS = 60      # fallback guess when the Shorts check can't be made: this short is treated as a Short
+UPLOAD_COLOR = 0xCC0000
 PRESENCE_ID = "presence"      # stream_id used when we only know about a stream from Discord's "Streaming" status
 
 
@@ -46,8 +54,41 @@ class LiveStream:
         return link_key(self.platform, self.channel_id)
 
 
+@dataclass(frozen=True)
+class Upload:
+    """A normal (non-live) YouTube video that has just appeared on a linked channel."""
+    channel_id: str       # YouTube channel ID (UC...)
+    video_id: str
+    title: str
+    url: str
+    thumbnail: str
+    name: str             # the channel name as YouTube shows it
+    published_at: float   # unix seconds; 0 if unknown
+    duration: Optional[int]   # seconds; None if unknown
+
+
 def link_key(platform: str, channel_id: str) -> str:
     return f"{platform}:{channel_id}"
+
+
+_ISO_DURATION = re.compile(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$")
+
+
+def parse_iso_duration(text: str) -> Optional[int]:
+    """Seconds from a YouTube ISO 8601 duration such as PT1M5S; None if it can't be read."""
+    m = _ISO_DURATION.match(text or "")
+    if not m or not any(m.groups()):
+        return None
+    days, hours, minutes, seconds = (int(g or 0) for g in m.groups())
+    return days * 86400 + hours * 3600 + minutes * 60 + seconds
+
+
+def parse_iso_time(text: str) -> float:
+    """Unix seconds from a YouTube timestamp such as 2026-11-23T10:00:00Z; 0 if it can't be read."""
+    try:
+        return datetime.fromisoformat((text or "").replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
 
 
 # ---- reading what a member typed ---------------------------------------------------------------------------
@@ -121,6 +162,19 @@ def load_state(settings, guild_id: int) -> dict:
 
 def save_state(settings, guild_id: int, state: dict) -> None:
     settings.set(guild_id, "streams:state", json.dumps(state))
+
+
+def load_upload_state(settings, guild_id: int) -> dict:
+    """channel_id -> {"seen": [video IDs]} for YouTube upload alerts."""
+    try:
+        data = json.loads(settings.get(guild_id, "streams:uploads", "{}") or "{}")
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_upload_state(settings, guild_id: int, state: dict) -> None:
+    settings.set(guild_id, "streams:uploads", json.dumps(state))
 
 
 def add_link(links: list[dict], user_id: int, platform: str, channel_id: str, name: str, game: str) -> tuple[list[dict], Optional[int]]:
@@ -230,7 +284,61 @@ def diff_live(
     return new, actions
 
 
+# ---- new uploads -------------------------------------------------------------------------------------------
+
+def diff_uploads(
+    state: dict, uploads: list[Upload], polled: set[str], linked: set[str], now: float
+) -> tuple[dict, list[Upload]]:
+    """Work out which uploads are new after a YouTube check.
+
+    state:   channel_id -> {"seen": [video IDs]} from earlier checks
+    uploads: every recent normal video the check saw
+    polled:  channel IDs the check actually covered. A channel that wasn't covered is left alone.
+    linked:  channel IDs that are linked now. State for anything else is dropped.
+    Returns (new_state, to_announce), oldest first.
+
+    A channel seen for the first time is only recorded, never announced, so linking a channel (or deploying this)
+    doesn't post its old videos. Anything older than UPLOAD_MAX_AGE is recorded but not announced, and at most
+    UPLOAD_MAX_PER_POLL per channel go out at once (the newest ones).
+    """
+    new = {cid: {"seen": list(entry.get("seen", []))} for cid, entry in state.items() if cid in linked}
+    by_channel: dict[str, list[Upload]] = {}
+    for up in uploads:
+        by_channel.setdefault(up.channel_id, []).append(up)
+    announce: list[Upload] = []
+    for cid in polled & linked:
+        videos = sorted(by_channel.get(cid, []), key=lambda u: u.published_at)
+        entry = new.get(cid)
+        if entry is None:                        # first sight: remember what's there, say nothing
+            new[cid] = {"seen": [u.video_id for u in videos][-UPLOAD_SEEN_KEEP:]}
+            continue
+        seen = entry["seen"]
+        fresh = [
+            u for u in videos
+            if u.video_id not in seen and u.published_at and now - u.published_at <= UPLOAD_MAX_AGE
+        ]
+        seen.extend(u.video_id for u in videos if u.video_id not in seen)
+        entry["seen"] = seen[-UPLOAD_SEEN_KEEP:]
+        announce.extend(fresh[-UPLOAD_MAX_PER_POLL:])
+    return new, announce
+
+
 # ---- embeds ------------------------------------------------------------------------------------------------
+
+def upload_embed(upload: Upload, display_name: str, avatar_url: Optional[str] = None) -> discord.Embed:
+    embed = discord.Embed(
+        title=(upload.title or "New video")[:256],
+        url=upload.url,
+        description=f"**{display_name}** uploaded a new video on YouTube.",
+        colour=discord.Colour(UPLOAD_COLOR),
+    )
+    embed.add_field(name="Watch", value=f"[{upload.name or 'YouTube'}]({upload.url})", inline=True)
+    if upload.thumbnail:
+        embed.set_image(url=upload.thumbnail)
+    embed.set_author(name=f"{display_name} · NEW VIDEO", icon_url=avatar_url)
+    embed.set_footer(text="YouTube")
+    return embed
+
 
 def live_embed(stream: LiveStream, display_name: str, avatar_url: Optional[str] = None) -> discord.Embed:
     label = PLATFORM_LABEL[stream.platform]
@@ -295,6 +403,24 @@ def parse_youtube_video(item: dict) -> Optional[LiveStream]:
         platform=YOUTUBE, channel_id=snippet.get("channelId", ""), stream_id=str(item.get("id", "")),
         title=snippet.get("title", ""), game="", url=f"https://www.youtube.com/watch?v={item.get('id', '')}",
         thumbnail=thumb, name=snippet.get("channelTitle", ""),
+    )
+
+
+def parse_youtube_upload(item: dict) -> Optional[Upload]:
+    """A finished, ordinary video; None for live, upcoming and past-livestream videos (those are stream alerts)."""
+    snippet = item.get("snippet", {})
+    if snippet.get("liveBroadcastContent") not in (None, "none") or item.get("liveStreamingDetails"):
+        return None
+    video_id = str(item.get("id", ""))
+    if not video_id or not snippet.get("channelId"):
+        return None
+    thumbs = snippet.get("thumbnails", {})
+    thumb = (thumbs.get("maxres") or thumbs.get("high") or thumbs.get("medium") or {}).get("url", "")
+    return Upload(
+        channel_id=snippet["channelId"], video_id=video_id, title=snippet.get("title", ""),
+        url=f"https://www.youtube.com/watch?v={video_id}", thumbnail=thumb, name=snippet.get("channelTitle", ""),
+        published_at=parse_iso_time(snippet.get("publishedAt", "")),
+        duration=parse_iso_duration(item.get("contentDetails", {}).get("duration", "")),
     )
 
 
@@ -381,6 +507,27 @@ class YouTubeClient:
         return {"channel_id": items[0]["id"], "name": items[0].get("snippet", {}).get("title", value)}
 
     async def live_now(self, channel_ids: list[str]) -> list[LiveStream]:
+        return (await self.scan(channel_ids))[0]
+
+    async def is_short(self, upload: Upload) -> bool:
+        """True if the video is a YouTube Short. The API has no flag for it, so: anything over 3 minutes isn't one;
+        otherwise ask YouTube's /shorts/ page, which stays put for a Short and redirects for an ordinary video.
+        If that can't be checked, a video of a minute or less is treated as a Short."""
+        if upload.duration is None or upload.duration > SHORTS_MAX_SECONDS:
+            return False
+        try:
+            async with self.session.head(f"https://www.youtube.com/shorts/{upload.video_id}", allow_redirects=False) as resp:
+                if resp.status == 200:
+                    return True
+                if 300 <= resp.status < 400:
+                    return False
+        except (aiohttp.ClientError, OSError):
+            pass
+        return upload.duration <= SHORTS_SURE_SECONDS
+
+    async def scan(self, channel_ids: list[str]) -> tuple[list[LiveStream], list[Upload]]:
+        """One pass over each channel's newest videos: (streams live now, ordinary recent uploads).
+        Both come from the same two API calls, so upload alerts cost no extra quota."""
         video_ids: list[str] = []
         for cid in channel_ids:
             if not _YT_ID.match(cid):
@@ -396,12 +543,19 @@ class YouTubeClient:
             video_ids += [i["contentDetails"]["videoId"] for i in body.get("items", []) if "contentDetails" in i]
         wanted = set(channel_ids)
         seen: set[str] = set()
-        out: list[LiveStream] = []
+        live: list[LiveStream] = []
+        uploads: list[Upload] = []
         for batch in _chunks(video_ids, 50):
-            body = await self._get("videos", {"part": "snippet,liveStreamingDetails", "id": ",".join(batch)})
+            body = await self._get(
+                "videos", {"part": "snippet,liveStreamingDetails,contentDetails", "id": ",".join(batch)}
+            )
             for item in body.get("items", []):
                 stream = parse_youtube_video(item)
                 if stream and stream.channel_id in wanted and stream.channel_id not in seen:
                     seen.add(stream.channel_id)
-                    out.append(stream)
-        return out
+                    live.append(stream)
+                    continue
+                upload = parse_youtube_upload(item)
+                if upload and upload.channel_id in wanted:
+                    uploads.append(upload)
+        return live, uploads
