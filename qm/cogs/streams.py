@@ -21,6 +21,7 @@ from ..streams import (
     TwitchClient,
     YouTubeClient,
     add_link,
+    alert_kinds,
     diff_live,
     diff_uploads,
     ended_embed,
@@ -321,7 +322,7 @@ class Streams(commands.Cog):
         where = get_channel(self.bot, interaction.guild, "streams_clips")
         role = get_role(self.bot, interaction.guild, ROLE_STREAMS)
         lines = [f"Linked **{name}** on {label} to {target.mention}."]
-        lines.append(f"When you go live I'll post in {where.mention}." if where else "Ask an admin to run `/setup run` so I know where to post.")
+        lines.append(f"When you {alert_kinds(platform.value)} I'll post in {where.mention}." if where else "Ask an admin to run `/setup run` so I know where to post.")
         if role:
             lines.append(f"Members who want the alerts can pick **{role.name}** in the role picker.")
         await interaction.followup.send("\n".join(lines), ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
@@ -385,7 +386,7 @@ class Streams(commands.Cog):
         links = load_links(self.bot.settings, guild.id)
         lines = [
             f"Twitch: {'on' if self.twitch else 'off (set TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET)'}",
-            f"YouTube: {'on' if self.youtube else 'off (set YOUTUBE_API_KEY)'}",
+            f"YouTube: {'on (go-live and new-upload alerts)' if self.youtube else 'off (set YOUTUBE_API_KEY)'}",
             "Discord Streaming status: " + (
                 "on" if self._presence_enabled(guild)
                 else "off (turned off with /stream presence)" if self._presence_available()
