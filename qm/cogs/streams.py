@@ -22,17 +22,21 @@ from ..streams import (
     YouTubeClient,
     add_link,
     diff_live,
+    diff_uploads,
     ended_embed,
     link_key,
     live_embed,
     load_links,
     load_state,
+    load_upload_state,
     parse_twitch,
     parse_youtube,
     presence_stream,
     remove_link,
     save_links,
     save_state,
+    save_upload_state,
+    upload_embed,
 )
 from ..util import get_channel, get_role, is_staff, send_log
 
@@ -147,12 +151,13 @@ class Streams(commands.Cog):
         youtube_links = [l for l in links if l["platform"] == YOUTUBE]
         if tick and youtube_links and self.youtube and youtube_due:
             try:
-                streams = await self.youtube.live_now([l["channel_id"] for l in youtube_links])
+                streams, uploads = await self.youtube.scan([l["channel_id"] for l in youtube_links])
             except (StreamAPIError, aiohttp.ClientError) as exc:
                 log.warning("YouTube poll failed: %s", exc)
             else:
                 live_now.update({s.key: s for s in streams})
                 polled.update(link_key(YOUTUBE, l["channel_id"]) for l in youtube_links)
+                await self._announce_uploads(guild, youtube_links, uploads)
 
         # Discord's own "Streaming" status counts too. The API's richer data wins when both know about a stream.
         for key, (stream, user_id) in presence.items():
@@ -188,6 +193,32 @@ class Streams(commands.Cog):
             await self._poll_guild(after.guild, tick=False)
         except Exception:
             log.exception("Presence-triggered stream check failed for guild %s", after.guild.id)
+
+    async def _announce_uploads(self, guild: discord.Guild, youtube_links: list[dict], uploads: list) -> None:
+        """Post each new ordinary video once. Shorts are skipped; a channel seen for the first time only records
+        what it already has. A failed post is not retried, so a hiccup can't cause a repeat."""
+        settings = self.bot.settings
+        state = load_upload_state(settings, guild.id)
+        linked = {l["channel_id"] for l in youtube_links}
+        new_state, fresh = diff_uploads(state, uploads, linked, linked, time.time())
+        if new_state != state:
+            save_upload_state(settings, guild.id, new_state)
+        owners = {l["channel_id"]: l for l in youtube_links}
+        for upload in fresh:
+            link = owners.get(upload.channel_id)
+            member = guild.get_member(link["user_id"]) if link else None
+            channel = get_channel(self.bot, guild, "streams_clips")
+            if member is None or channel is None:
+                continue
+            try:
+                if await self.youtube.is_short(upload):
+                    continue
+                await channel.send(
+                    embed=upload_embed(upload, member.display_name, member.display_avatar.url),
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+            except discord.HTTPException as exc:
+                log.warning("Couldn't post the upload %s: %s", upload.video_id, exc)
 
     async def _announce(self, guild, link, stream, entry: dict, resume: bool):
         member = guild.get_member(link["user_id"])
