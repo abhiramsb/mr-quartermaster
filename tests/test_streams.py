@@ -665,3 +665,9 @@ def test_cog_upload_alerts_ignore_members_who_left_and_survive_an_outage():
     cog2.youtube.scan = boom
     run(cog2._poll_guild(guild2))
     assert channel2.sent == [] and UC in load_upload_state(cog2.bot.settings, 1)
+
+
+def test_link_reply_wording_mentions_uploads_only_for_youtube():
+    from qm.streams import alert_kinds
+    assert alert_kinds(TWITCH) == "go live"
+    assert "upload a new video" in alert_kinds(YOUTUBE) and "Shorts" in alert_kinds(YOUTUBE)

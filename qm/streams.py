@@ -71,6 +71,13 @@ def link_key(platform: str, channel_id: str) -> str:
     return f"{platform}:{channel_id}"
 
 
+def alert_kinds(platform: str) -> str:
+    """What a linked channel on this platform gets announced for, in words for the /stream link reply."""
+    if platform == YOUTUBE:
+        return "go live or upload a new video (Shorts are skipped)"
+    return "go live"
+
+
 _ISO_DURATION = re.compile(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$")
 
 
